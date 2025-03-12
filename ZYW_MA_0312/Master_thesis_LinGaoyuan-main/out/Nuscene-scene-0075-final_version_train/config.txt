@@ -1,0 +1,97 @@
+### INPUT
+# expname = Nuscene_scene_epoch_version_75_prior_depth_fine_sample_overall_sky_mlp_num_src_4_image_gnt_model_gnt_feature_extractor_20241023_test1
+expname = Nuscene_master_thesis_test_arm_filter_bank
+
+rootdir = ./
+render_stride = 1
+distributed = False
+
+## dataset
+# train_dataset = nuscene
+# train_scenes = scene-0007
+# eval_dataset = nuscene
+# eval_scenes = scene-0007
+
+train_dataset = nuscene_train_val
+train_scenes = scene-0075
+eval_dataset = nuscene_train_val
+eval_scenes = scene-0075
+
+### IMAGE RESIZE
+image_H = 900
+image_W = 1600
+resize_image = False
+image_resize_H = 450
+image_resize_W = 800
+
+### TRAINING
+num_source_views = 6
+N_rand = 3072
+lrate_feature = 0.001
+lrate_gnt = 0.0005
+lrate_decay_factor = 0.5
+lrate_decay_steps = 50000
+single_net = True
+trans_depth = 4
+
+### SKY
+sky_model_type = mlp
+lrate_sky_model = 0.001
+lrate_decay_factor_sky_model = 0.88
+lrate_decay_steps_sky_model = 500
+
+lrate_sky_style_model = 0.006
+lrate_decay_factor_sky_style_model = 0.88
+lrate_decay_steps_sky_style_model = 500
+
+### ReTR
+use_volume_feature = False
+use_retr_feature_extractor = False
+use_retr_model = False
+lrate_retr = 0.001
+lrate_retr_feature_volume = 0.001
+lrate_retr_feature_extractor = 0.001
+
+### TESTING
+chunk_size = 2000
+testskip = 1
+
+### RENDERING
+N_importance = 0
+N_samples = 32
+inv_uniform = False
+white_bkgd = False
+sample_with_prior_depth = False
+N_samples_depth = 32
+
+### loss coefficient
+lambda_rgb = 0.999
+lambda_depth = 0.001
+
+### CONSOLE AND TENSORBOARD
+i_img = 500
+i_print = 100
+i_weights = 20000
+
+max_epochs = 1000
+
+### prior depth update
+update_prior_depth = False
+i_prior_depth_update = 50000
+save_prior_depth = False
+
+
+cov_criteria = False
+preset_depth_cov = 50
+
+depth_loss_criteria = False
+preset_depth_loss = 30
+
+update_prior_depth_epochs = 50
+
+### unbounded contraction
+contraction_type = None
+
+### Anti-aliasing
+aliasing_filter = True
+aliasing_filter_type = filter bank
