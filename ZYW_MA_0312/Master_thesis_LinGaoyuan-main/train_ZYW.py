@@ -145,7 +145,6 @@ def train(args):
 
         val_prior_depth_values[idx, ...] = val_depth_value
 
-
     # Create GNT model
     '''
     LinGaoyuan_operation_20240918: now the model can contain retr model according to the indicator of args
@@ -154,6 +153,7 @@ def train(args):
     # model = GNTModel(
     #     args, load_opt=not args.no_load_opt, load_scheduler=not args.no_load_scheduler
     # )
+    # Zhenyi Wan [2025/3/12] the name is GNT, but it contains both retr and gnt model
     model_building = GNTModel(
         args, load_opt=not args.no_load_opt, load_scheduler=not args.no_load_scheduler
     )

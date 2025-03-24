@@ -29,6 +29,7 @@ class LinearAttention(Module):
         Returns:
             queried_values: (N, L, H, D)
         """
+        # Zhenyi Wan [2025/3/12] ELU activation, add additional 1 to the result
         Q = self.feature_map(queries)
         K = self.feature_map(keys)
 
@@ -39,8 +40,10 @@ class LinearAttention(Module):
             K = K * kv_mask[:, :, None, None]
             values = values * kv_mask[:, :, None, None]
         v_length = values.size(1)
+        # Zhenyi Wan [2025/3/12] To prevent values from overflowing (especially at FP16 precision),
+        # values are scaled according to its length. By dividing by v_length, the value is kept stable.
         values = values / v_length  # prevent fp16 overflow
-        KV = torch.einsum("nshd,nshv->nhdv", K, values)  # (S,D)' @ S,V
+        KV = torch.einsum("nshd,nshv->nhdv", K, values)  # (S,D)' @ S,V #NHDV
         Z = 1 / (torch.einsum("nlhd,nhd->nlh", Q, K.sum(dim=1)) + self.eps)
         queried_values = torch.einsum("nlhd,nhdv,nlh->nlhv", Q, KV, Z) * v_length
 
@@ -66,14 +69,16 @@ class FullAttention(Module):
         """
 
         # Compute the unnormalized attention and apply the masks
-        QK = torch.einsum("nlhd,nshd->nlsh", queries, keys)
+        QK = torch.einsum("nlhd,nshd->nlsh", queries, keys)# Zhenyi Wan [2025/3/17] (n_rand, n_samples+1, n_samples+1, nhead) decoder (N_rand, 1, N_samples, 1)
+        # Zhenyi Wan [2025/3/17] mask is a under triangle matrix.
         if kv_mask is not None:
+            # Zhenyi Wan [2025/3/17] the right upper triangle matrix of QK is filled with -inf.
             QK.masked_fill_(~(q_mask[:, :, :, None].bool()), float('-inf'))
 #            QK.masked_fill_(~(q_mask[:, :, None, None] * kv_mask[:, None, :, None]), float('-inf'))
 
-        # Compute the attention and the weighted average
-        softmax_temp = 1. / queries.size(3)**.5  # sqrt(D)
-        self.A = torch.softmax(softmax_temp * QK, dim=2)
+        # Compute the attention and the weighted averag/e
+        softmax_temp = 1. / queries.size(3)**.5  # 1/sqrt(D)
+        self.A = torch.softmax(softmax_temp * QK, dim=2)# Zhenyi Wan [2025/3/17] Attention Matrix (n_rand, n_samples+1, n_samples+1, nhead) decoder (N_rand, 1, N_samples, 1)
         if self.use_dropout:
             A = self.dropout(self.A)
 

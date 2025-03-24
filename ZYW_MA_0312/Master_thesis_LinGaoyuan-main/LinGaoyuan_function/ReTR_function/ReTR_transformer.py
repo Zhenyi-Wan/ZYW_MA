@@ -64,10 +64,10 @@ class LoFTREncoderLayer(nn.Module):
         # multi-head attention
         query = self.q_proj(query).view(bs, -1, self.nhead, self.dim)  # [N, L, (H, D)]
         key = self.k_proj(key).view(bs, -1, self.nhead, self.dim)  # [N, S, (H, D)]
-        value = self.v_proj(value).view(bs, -1, self.nhead, self.dim)
+        value = self.v_proj(value).view(bs, -1, self.nhead, self.dim)  # [N, S, (H, D)]
         message = self.attention(query, key, value, q_mask=x_mask, kv_mask=source_mask)  # [N, L, (H, D)]
-        message = self.merge(message.view(bs, -1, self.nhead*self.dim))  # [N, L, C]
-        message = self.norm1(message)
+        message = self.merge(message.view(bs, -1, self.nhead*self.dim))  # [N, L, C] C=H*D
+        message = self.norm1(message)# [N, L, C]
 
 
         'LinGaoyuan_operation_20241023: add arm to retr model'
@@ -78,10 +78,10 @@ class LoFTREncoderLayer(nn.Module):
 
 
         # feed-forward network
-        message = self.mlp(torch.cat([x, message], dim=2))
-        message = self.norm2(message)
+        message = self.mlp(torch.cat([x, message], dim=2))# Zhenyi Wan [2025/3/17] [N, L, 2*C]-[N, L, C]
+        message = self.norm2(message)# Zhenyi Wan [2025/3/17] [N, L, C]
 
-        return x + message
+        return x + message# Zhenyi Wan [2025/3/17] [N, L, C]
 
 
 class LocalFeatureTransformer(nn.Module):
