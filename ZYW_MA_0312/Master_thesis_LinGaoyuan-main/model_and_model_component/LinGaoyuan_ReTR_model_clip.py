@@ -160,27 +160,28 @@ class LinGaoyuan_ReTR_model(nn.Module):
             x_weight[mask==0] = -1e4
         weight = self.softmax(x_weight)  # LinGaoyuan_20240917: (N_rand, N_samples, n_views, 1)
 
-        source_imgs_feat = rearrange(source_imgs_feat, "N_rand N_samples n_views C -> n_views C N_rand N_samples")
-        radiance = (source_imgs_feat * rearrange(weight,"N_rand N_samples n_views 1 -> n_views 1 N_rand N_samples", N_rand=N_rand, N_samples = N_samples)).sum(axis=0)
-        radiance = rearrange(radiance, "DimRGB N_rand N_samples -> N_rand N_samples DimRGB")
+        source_imgs_feat = rearrange(source_imgs_feat, "N_rand N_samples n_views C -> n_views C N_rand N_samples")# Zhenyi Wan [2025/3/14] (n_views 35 N_rand N_samples)
+        radiance = (source_imgs_feat * rearrange(weight,"N_rand N_samples n_views 1 -> n_views 1 N_rand N_samples", N_rand=N_rand, N_samples = N_samples)).sum(axis=0)# Zhenyi Wan [2025/3/14] (35 N_rand N_samples)
+        radiance = rearrange(radiance, "DimRGB N_rand N_samples -> N_rand N_samples DimRGB")# Zhenyi Wan [2025/3/14] (N_rand N_samples 35)
 
-        attn_mask = self.get_attn_mask(N_samples).type_as(radiance)
-        input_occ = torch.cat((self.fuse_layer(radiance), self.order_posenc(100 * z_vals.reshape(-1,z_vals.shape[-1])).type_as(radiance)), dim=-1)
-        radiance_tokens = self.RadianceToken(input_occ).unsqueeze(1)
-        input_occ = torch.cat((radiance_tokens, input_occ), dim=1)
+        attn_mask = self.get_attn_mask(N_samples).type_as(radiance)# Zhenyi Wan [2025/3/14] (1, N_samples+1, N_samples+1)
+        input_occ = torch.cat((self.fuse_layer(radiance), self.order_posenc(100 * z_vals.reshape(-1,z_vals.shape[-1])).type_as(radiance)), dim=-1)# Zhenyi Wan [2025/3/14] (N_rand, N_samples, 40)
+        radiance_tokens = self.RadianceToken(input_occ).unsqueeze(1)# Zhenyi Wan [2025/3/14] (N_rand, 1, 1, 40)
+        input_occ = torch.cat((radiance_tokens, input_occ), dim=1)# Zhenyi Wan [2025/3/14] (N_rand, N_samples + 1, 40)
 
-        output_occ = self.occu_transformer(input_occ)
+        output_occ = self.occu_transformer(input_occ)# Zhenyi Wan [2025/3/14] (N_rand, N_samples + 1, 40)
 
-        output_ray = self.ray_transformer(output_occ[:,:1], output_occ[:,1:])
-        weight = self.ray_transformer.atten_weight.squeeze()
+        output_ray = self.ray_transformer(output_occ[:,:1], output_occ[:,1:])# Zhenyi Wan [2025/3/20] query:(N_rand, 1, 40)
+        # key,value:(N_rand, N_samples, 40). output is (N_rand, 1, 40)
+        weight = self.ray_transformer.atten_weight.squeeze()# Zhenyi Wan [2025/3/20] (N_rand, N_samples)
 
-        rgb = torch.sigmoid(self.RadianceMLP(output_ray))
+        rgb = torch.sigmoid(self.RadianceMLP(output_ray))# Zhenyi Wan [2025/3/20] (N_rand, 1, 3)
 
         if len(rgb.shape) == 3:
-            rgb = rgb.squeeze()
+            rgb = rgb.squeeze()# Zhenyi Wan [2025/3/24] (N_rand, 3)
 
         if ret_alpha  is True:
-            rgb = torch.cat([rgb,weight], dim=1)
+            rgb = torch.cat([rgb,weight], dim=1)# Zhenyi Wan [2025/3/24] (N_rand, N_samples+3)
 
         return rgb
 

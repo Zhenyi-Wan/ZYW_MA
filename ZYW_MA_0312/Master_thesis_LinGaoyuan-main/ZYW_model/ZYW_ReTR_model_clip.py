@@ -10,7 +10,7 @@ from LinGaoyuan_function.ReTR_function.ReTR_cnn2d import ResidualBlock
 import math
 
 
-class LinGaoyuan_ReTR_model(nn.Module):
+class ZYW_ReTR_model(nn.Module):
     def __init__(self, args, in_feat_ch=32, posenc_dim=3, viewenc_dim=3, ret_alpha=False, use_volume_feature = False, dim_clip_shape_code = 0):
         super().__init__()
 
@@ -101,7 +101,7 @@ class LinGaoyuan_ReTR_model(nn.Module):
                     self.in_feat_ch * 2 + self.PE_d_hid + self.dim_clip_appearance_code + self.dim_clip_shape_code, 32),
                 nn.ReLU(inplace=True),
                 nn.Linear(32, 16), nn.ReLU(inplace=True),
-                nn.Linear(16, 3)
+                nn.Linear(16, 1)
             )
 
 
@@ -213,6 +213,7 @@ class LinGaoyuan_ReTR_model(nn.Module):
         mask = (torch.triu(torch.ones(1, num_points+1, num_points+1)) == 1).transpose(1, 2)
     #    mask[:,0, 1:] = 0
         return mask
+
     def order_posenc(self, z_vals):
         """
         :param d_model: dimension of the model
@@ -245,20 +246,69 @@ class LinGaoyuan_ReTR_model(nn.Module):
         input_view = rearrange(input_view, 'N_rand N_samples n_views C -> (N_rand N_samples) n_views C')
 
         output_view = self.view_transformer(input_view)
-
-        # Zhenyi Wan [2025/3/14] BRDF Features Encoder:Use four transformers as encoder for metallic, roughness, albedo and normals. The inputs are all the same,
-        # sampled scr image features.
-        metallic_feature = self.metallic_transformer(input_view)#(N_rand, N_samples, n_views, 32)
-        roughness_feature = self.roughnesss_transformer(input_view)#(N_rand, N_samples, n_views, 32)
-        albedo_feature = self.albedo_transformer(input_view)#(N_rand, N_samples, n_views, 32)
-        normals_feature = self.normals_transformer(input_view)#(N_rand, N_samples, n_views, 32)
-
         # output_view = output_view.permute(2,0,1,3)  # LinGaoyuan_20240916: (N_rand, N_samples, n_views, 32) -> (n_views, N_rand, N_samples, 32)
 
         # input_occ = output_view[:,:,0,:]  # LinGaoyuan_20240916: (N_rand, N_samples, 1, 32)
         # view_feature = output_view[:,:,1:,:]  # LinGaoyuan_20240916: (N_rand, N_samples, NV - 1, 32)
         view_feature = output_view  # LinGaoyuan_20240916: (N_rand, N_samples, n_views, 32)
         view_feature = rearrange(view_feature, '(N_rand N_samples) n_views C -> N_rand N_samples n_views C', N_rand = N_rand, N_samples = N_samples)
+        x_weight = torch.cat([view_feature, dir_relative], dim=-1)  # LinGaoyuan_20240917: (N_rand, N_samples, n_views, 35)
+        x_weight = self.linear_radianceweight_1_softmax(x_weight)  # LinGaoyuan_20240917: (N_rand, N_samples, n_views, 1)
+        if x_weight.dtype == torch.float32:
+            x_weight[mask==0] = -1e9
+        else:
+            x_weight[mask==0] = -1e4
+        weight = self.softmax(x_weight)  # LinGaoyuan_20240917: (N_rand, N_samples, n_views, 1)
+
+        source_imgs_feat = rearrange(source_imgs_feat, "N_rand N_samples n_views C -> n_views C N_rand N_samples")# Zhenyi Wan [2025/3/14] (n_views 35 N_rand N_samples)
+        radiance = (source_imgs_feat * rearrange(weight,"N_rand N_samples n_views 1 -> n_views 1 N_rand N_samples", N_rand=N_rand, N_samples = N_samples)).sum(axis=0)# Zhenyi Wan [2025/3/14] (35 N_rand N_samples)
+        radiance = rearrange(radiance, "DimRGB N_rand N_samples -> N_rand N_samples DimRGB")# Zhenyi Wan [2025/3/14] (N_rand N_samples 35)
+
+        # Zhenyi Wan [2025/3/14] Create a mask for occlusion transformer!needed. Because the channels here for the BRDF features are still same
+        # just need one attn_mask.(upper triangle matrix, take care of the points which are only in front of it.
+        attn_mask = self.get_attn_mask(N_samples).type_as(radiance)# Zhenyi Wan [2025/3/14] (1, N_samples+1, N_samples+1)     # Zhenyi Wan [2025/3/14] self.fuse_layer(radiance)(N_rand, N_samples, 8)
+
+        input_occ = torch.cat((self.fuse_layer(radiance), self.order_posenc(100 * z_vals.reshape(-1,z_vals.shape[-1])).type_as(radiance)), dim=-1)# Zhenyi Wan [2025/3/14] (N_rand, N_samples, 40)
+        radiance_tokens = self.RadianceToken(input_occ)# Zhenyi Wan [2025/3/14] (N_rand, 1, 1, 40)
+        input_occ = torch.cat((radiance_tokens, input_occ), dim=1)# Zhenyi Wan [2025/3/14] (N_rand, N_samples + 1, 40)
+
+        # Zhenyi Wan [2025/3/17] mask0 is under triangle matrix, dim is (1, N_samples+1, N_samples+1). It helps to control the attention matrix
+        output_occ = self.occu_transformer(input_occ, mask0 = attn_mask)# Zhenyi Wan [2025/3/14] (N_rand, N_samples + 1, 40)
+
+        output_ray = self.ray_transformer(output_occ[:,:1], output_occ[:,1:])# Zhenyi Wan [2025/3/20] query:(N_rand, 1, 40)
+        #key,value:(N_rand, N_samples, 40). output is (N_rand, 1, 40)
+
+        weight = self.ray_transformer.atten_weight.squeeze()# Zhenyi Wan [2025/3/20] (N_rand, N_samples)
+
+        rgb = torch.sigmoid(self.RadianceMLP(output_ray))# Zhenyi Wan [2025/3/20] (N_rand, 1, 3)
+
+        if len(rgb.shape) == 3:
+            rgb = rgb.squeeze()# Zhenyi Wan [2025/3/24] (N_rand, 3)
+
+        if ret_alpha  is True:
+            rgb = torch.cat([rgb,weight], dim=1)# Zhenyi Wan [2025/3/24] (N_rand, N_samples+3)
+
+        return rgb
+
+
+    def forward_BDRF(self, point3D, ray_batch, source_imgs_feat, z_vals, mask, ray_d, ray_diff, fea_volume=None, ret_alpha=True):
+        B, n_views, H, W, rgb_channel = ray_batch['src_rgbs'].shape  # LinGaoyuan_20240916: B = Batch NV = num_source_views
+        N_rand, N_samples, _ = point3D.shape
+
+        img_rgb_sampled = source_imgs_feat[:, :, :, :3]  # LinGaoyuan_20240917: (N_rand, N_samples, n_views, 3)
+        img_feat_sampled = source_imgs_feat[:, :, :, 3:]  # LinGaoyuan_20240917: (N_rand, N_samples, n_views, 32)
+        dir_relative = ray_diff[:, :, :, :3]  # (N_rand, N_samples, n_views, 3)
+
+        # input_view = self.rgbfeat_fc(source_imgs_feat)  # LinGaoyuan_20240916: (N_rand, N_samples, n_views, 35) -> (N_rand, N_samples, n_views, 32)
+        input_view = img_feat_sampled  # LinGaoyuan_20240916: (N_rand, N_samples, n_views, 32)
+        input_view = rearrange(input_view, 'N_rand N_samples n_views C -> (N_rand N_samples) n_views C')\
+
+        # Zhenyi Wan [2025/3/14] BRDF Features Encoder:Use four transformers as encoder for metallic, roughness, albedo and normals. The inputs are all the same,
+        # sampled scr image features.
+        metallic_feature = self.metallic_transformer(input_view)  # (N_rand, N_samples, n_views, 32)
+        roughness_feature = self.roughnesss_transformer(input_view)  # (N_rand, N_samples, n_views, 32)
+        albedo_feature = self.albedo_transformer(input_view)  # (N_rand, N_samples, n_views, 32)
+        normals_feature = self.normals_transformer(input_view)  # (N_rand, N_samples, n_views, 32)
 
         # Zhenyi Wan [2025/3/14] rearrange the BRDF features
         metallic_feature = rearrange(metallic_feature, '(N_rand N_samples) n_views C -> N_rand N_samples n_views C', N_rand = N_rand, N_samples = N_samples)
@@ -269,15 +319,6 @@ class LinGaoyuan_ReTR_model(nn.Module):
         normals_feature = rearrange(normals_feature, '(N_rand N_samples) n_views C -> N_rand N_samples n_views C',
                                      N_rand=N_rand, N_samples=N_samples)
         BRDF_features = [metallic_feature, roughness_feature, albedo_feature, normals_feature]
-
-
-        x_weight = torch.cat([view_feature, dir_relative], dim=-1)  # LinGaoyuan_20240917: (N_rand, N_samples, n_views, 35)
-        x_weight = self.linear_radianceweight_1_softmax(x_weight)  # LinGaoyuan_20240917: (N_rand, N_samples, n_views, 1)
-        if x_weight.dtype == torch.float32:
-            x_weight[mask==0] = -1e9
-        else:
-            x_weight[mask==0] = -1e4
-        weight = self.softmax(x_weight)  # LinGaoyuan_20240917: (N_rand, N_samples, n_views, 1)
 
         # Zhenyi Wan [2025/3/14] BRDF occlusion weights:combine the BRDF features with relative direction (N_rand, N_samples, n_views, 35)
         BRDF_weights = []
@@ -290,28 +331,17 @@ class LinGaoyuan_ReTR_model(nn.Module):
                 BRDF_weight[mask == 0] = -1e4
             BRDF_weight = self.softmax(BRDF_weight)
             BRDF_weights.append(BRDF_weight)
-        [metallic_weight, roughness_weight, albedo_weight, normals_weight] = BRDF_weights
-
-        source_imgs_feat = rearrange(source_imgs_feat, "N_rand N_samples n_views C -> n_views C N_rand N_samples")# Zhenyi Wan [2025/3/14] (n_views 35 N_rand N_samples)
-        radiance = (source_imgs_feat * rearrange(weight,"N_rand N_samples n_views 1 -> n_views 1 N_rand N_samples", N_rand=N_rand, N_samples = N_samples)).sum(axis=0)# Zhenyi Wan [2025/3/14] (35 N_rand N_samples)
-        radiance = rearrange(radiance, "DimRGB N_rand N_samples -> N_rand N_samples DimRGB")# Zhenyi Wan [2025/3/14] (N_rand N_samples 35)
+        [metallic_weight, roughness_weight, albedo_weight, normals_weight] = BRDF_weights\
 
         # Zhenyi Wan [2025/3/14] BRDF radiances
         BRDF_radiances = []
         for i, BRDF_weight in enumerate(BRDF_weights):
-            BRDF_radiance = (source_imgs_feat * rearrange(BRDF_weight, "N_rand N_samples n_views 1 -> n_views 1 N_rand N_samples",
-                                                     N_rand=N_rand, N_samples=N_samples)).sum(axis=0)
+            BRDF_radiance = (source_imgs_feat * rearrange(BRDF_weight,
+                                                          "N_rand N_samples n_views 1 -> n_views 1 N_rand N_samples",
+                                                          N_rand=N_rand, N_samples=N_samples)).sum(axis=0)
             BRDF_radiance = rearrange(BRDF_radiance, "DimRGB N_rand N_samples -> N_rand N_samples DimRGB")
             BRDF_radiances.append(BRDF_radiance)
         [metallic_radiance, roughness_radiance, albedo_radiance, normals_radiance] = BRDF_radiances
-
-        # Zhenyi Wan [2025/3/14] Create a mask for occlusion transformer!needed. Because the channels here for the BRDF features are still same
-        # just need one attn_mask.(upper triangle matrix, take care of the points which are only in front of it.
-        attn_mask = self.get_attn_mask(N_samples).type_as(radiance)# Zhenyi Wan [2025/3/14] (1, N_samples+1, N_samples+1)     # Zhenyi Wan [2025/3/14] self.fuse_layer(radiance)(N_rand, N_samples, 8)
-
-        input_occ = torch.cat((self.fuse_layer(radiance), self.order_posenc(100 * z_vals.reshape(-1,z_vals.shape[-1])).type_as(radiance)), dim=-1)# Zhenyi Wan [2025/3/14] (N_rand, N_samples, 40)
-        radiance_tokens = self.RadianceToken(input_occ)# Zhenyi Wan [2025/3/14] (N_rand, 1, 1, 40)
-        input_occ = torch.cat((radiance_tokens, input_occ), dim=1)# Zhenyi Wan [2025/3/14] (N_rand, N_samples + 1, 40)
 
         # Zhenyi Wan [2025/3/14] BRDF occlusion input:
         BRDFocc_inputs = []
@@ -325,8 +355,8 @@ class LinGaoyuan_ReTR_model(nn.Module):
         [metallicocc_input, roughnessocc_input, albedoocc_input, normalsocc_input] = BRDFocc_inputs
         [metallicradiance_token, roughnessradiance_token, albedoradiance_token, normalsradiance_token] = BDRFradiance_tokens
 
-        # Zhenyi Wan [2025/3/17] mask0 is under triangle matrix, dim is (1, N_samples+1, N_samples+1)。 It helps to control the attention matrix
-        output_occ = self.occu_transformer(input_occ, mask0 = attn_mask)# Zhenyi Wan [2025/3/14] (N_rand, N_samples + 1, 40)
+        attn_mask = self.get_attn_mask(N_samples).type_as(
+            metallic_radiance)  # Zhenyi Wan [2025/3/14] (1, N_samples+1, N_samples+1)     # Zhenyi Wan [2025/3/14] self.fuse_layer(radiance)(N_rand, N_samples, 8)
 
         # Zhenyi Wan [2025/3/14] BDRF occlusion Tranformer
         metallic_occ = self.metallic_occu_transformer(metallicocc_input, mask0 = attn_mask)
@@ -334,16 +364,11 @@ class LinGaoyuan_ReTR_model(nn.Module):
         albedo_occ = self.albedo_occu_transformer(albedoocc_input, mask0 = attn_mask)
         normals_occ = self.normals_occu_transformer(normalsocc_input, mask0 = attn_mask)
 
-        output_ray = self.ray_transformer(output_occ[:,:1], output_occ[:,1:])# Zhenyi Wan [2025/3/20] query:(N_rand, 1, 40)
-        #key,value:(N_rand, N_samples, 40). output is (N_rand, 1, 40)
-
         # Zhenyi Wan [2025/3/20] BRDF Decoder
         output_metallic = self.metallic_decoder(metallic_occ[:,:1], metallic_occ[:,1:])
         output_roughness = self.roughness_decoder(roughness_occ[:, :1], roughness_occ[:, 1:])
         output_albedo = self.albedo_decoder(albedo_occ[:, :1], albedo_occ[:, 1:])
         output_normals = self.normals_decoder(normals_occ[:, :1], normals_occ[:, 1:])
-
-        weight = self.ray_transformer.atten_weight.squeeze()# Zhenyi Wan [2025/3/20] (N_rand, N_samples)
 
         # Zhenyi Wan [2025/3/20] BRDF weights
         metallic_weight = self.metallic_decoder.atten_weight.squeeze()
@@ -351,16 +376,11 @@ class LinGaoyuan_ReTR_model(nn.Module):
         albedo_weight = self.albedo_decoder.atten_weight.squeeze()
         normals_weight = self.normals_decoder.atten_weight.squeeze()
 
-        rgb = torch.sigmoid(self.RadianceMLP(output_ray))# Zhenyi Wan [2025/3/20] (N_rand, 1, 3)
-
         # Zhenyi Wan [2025/3/20] BRDF-Buffer
         metallic = torch.sigmoid(self.MaterialMLP(output_metallic))# Zhenyi Wan [2025/3/20] (N_rand, 1, 1)
         roughness = torch.sigmoid(self.MaterialMLP(output_roughness))# Zhenyi Wan [2025/3/20] (N_rand, 1, 1)
         albedo = torch.sigmoid(self.RadianceMLP(output_albedo))# Zhenyi Wan [2025/3/20] (N_rand, 1, 3)
         normals = torch.sigmoid(self.RadianceMLP(output_normals))# Zhenyi Wan [2025/3/20] (N_rand, 1, 3)
-
-        if len(rgb.shape) == 3:
-            rgb = rgb.squeeze()# Zhenyi Wan [2025/3/24] (N_rand, 3)
 
         # Zhenyi Wan [2025/3/24] Squeeze the buffer tensor
         if len(albedo.shape) == 3:
@@ -372,23 +392,22 @@ class LinGaoyuan_ReTR_model(nn.Module):
         if len(roughness.shape) == 1:
             roughness = roughness.squeeze(1)# Zhenyi Wan [2025/3/24] (N_rand, 1)
 
-        if ret_alpha  is True:
-            rgb = torch.cat([rgb,weight], dim=1)# Zhenyi Wan [2025/3/24] (N_rand, N_samples+3)
-            albedo = torch.cat([albedo,albedo_weight], dim=1)# Zhenyi Wan [2025/3/24] (N_rand, N_samples+3)
+        if ret_alpha is True:
+            albedo = torch.cat([albedo, albedo_weight], dim=1)  # Zhenyi Wan [2025/3/24] (N_rand, N_samples+3)
             normals = torch.cat([normals, normals_weight], dim=1)  # Zhenyi Wan [2025/3/24] (N_rand, N_samples+3)
             metallic = torch.cat([metallic, metallic_weight], dim=1)  # Zhenyi Wan [2025/3/24] (N_rand, N_samples+1)
             roughness = torch.cat([roughness, roughness_weight], dim=1)  # Zhenyi Wan [2025/3/24] (N_rand, N_samples+1)
 
         # Zhenyi Wan [2025/3/24] BRDF outputs stored
         BRDF_buffer = {
-            "albedo": albedo,
-            "normals": normals,
-            "metallic": metallic,
-            "roughness": roughness
-        }
+                "albedo": albedo,
+                "normals": normals,
+                "metallic": metallic,
+                "roughness": roughness
+            }
+        return BRDF_buffer
 
 
-        return rgb, BRDF_buffer
 
     def forward_clip(self, point3D, ray_batch, source_imgs_feat, z_vals, mask, ray_d, ray_diff, fea_volume=None, ret_alpha=True, latent_code=None):
 
@@ -401,8 +420,8 @@ class LinGaoyuan_ReTR_model(nn.Module):
 
         'LinGaoyuan_20240930: create clip shape code and appearance code, the size of latent_code should be (128) or (2,128)'
         if (latent_code.shape)[0] == 2:
-            clip_shape_code = latent_code[0,:]
-            clip_appearance_code = latent_code[1,:]
+            clip_shape_code = latent_code[0,:]# Zhenyi Wan [2025/3/25] the first line(128,)
+            clip_appearance_code = latent_code[1,:]# Zhenyi Wan [2025/3/25] the second line(128,)
         else:
             clip_shape_code = None
             clip_appearance_code = latent_code.unsqueeze(0)  # we want (128) -> (1,128)
@@ -437,22 +456,22 @@ class LinGaoyuan_ReTR_model(nn.Module):
         radiance_tokens = self.RadianceToken(input_occ).unsqueeze(1)
         input_occ = torch.cat((radiance_tokens, input_occ), dim=1)
 
-        output_occ = self.occu_transformer(input_occ)
+        output_occ = self.occu_transformer(input_occ, mask0 = attn_mask)# Zhenyi Wan [2025/3/25] (N_rand, N_samples + 1, 40)
 
 
-        'LinGaoyuan_operation_20240930: determine to whether add the clip shape code to raY_transformer or not based on the size of latent_code'
+        'LinGaoyuan_operation_20240930: determine to whether add the clip shape code to ray_transformer or not based on the size of latent_code'
         if clip_shape_code == None:
-            output_ray = self.ray_transformer(output_occ[:,:1], output_occ[:,1:])
+            output_ray = self.ray_transformer(output_occ[:,:1], output_occ[:,1:])# Zhenyi Wan [2025/3/25] (N_rand, 1, 40)
         else:
-            clip_shape_code = clip_shape_code.repeat((output_occ.shape)[0], (output_occ.shape)[1], 1)
-            output_occ = torch.cat((output_occ,clip_shape_code), dim=-1)
-            output_ray = self.ray_transformer(output_occ[:, :1], output_occ[:, 1:])
+            clip_shape_code = clip_shape_code.repeat((output_occ.shape)[0], (output_occ.shape)[1], 1)# Zhenyi Wan [2025/3/25] (N_rand, N_samples+1, 128)
+            output_occ = torch.cat((output_occ,clip_shape_code), dim=-1)# Zhenyi Wan [2025/3/25] (N_rand, N_samples+1, 40+128)
+            output_ray = self.ray_transformer(output_occ[:, :1], output_occ[:, 1:])# Zhenyi Wan [2025/3/25] (N_rand, 1, 40+128)
 
         weight = self.ray_transformer.atten_weight.squeeze()
 
         'LinGaoyuan_20240930: cat clip radiance code as the input of self.RadianceMLP()'
-        clip_appearance_code = clip_appearance_code.repeat((output_ray.shape)[0], (output_ray.shape)[1], 1)
-        output_ray = torch.cat((output_ray,clip_appearance_code), dim=-1)
+        clip_appearance_code = clip_appearance_code.repeat((output_ray.shape)[0], (output_ray.shape)[1], 1)# Zhenyi Wan [2025/3/25] (N_rand, 1, 128)
+        output_ray = torch.cat((output_ray,clip_appearance_code), dim=-1)# Zhenyi Wan [2025/3/25] (N_rand, 1, 40+128+128)
 
         rgb = torch.sigmoid(self.RadianceMLP(output_ray))
 
@@ -476,24 +495,25 @@ class LinGaoyuan_ReTR_model(nn.Module):
         dir_relative = ray_diff[:,:,:,:3]
 
         if fea_volume is not None:
-            fea_volume_feat = grid_sample_3d(fea_volume, point3D[None,None,...].float())
-            fea_volume_feat = rearrange(fea_volume_feat, "B C RN SN -> (B RN SN) C")
+            fea_volume_feat = grid_sample_3d(fea_volume, point3D[None,None,...].float())# Zhenyi Wan [2025/3/26] (B, C, N_rand, N_samples)
+            fea_volume_feat = rearrange(fea_volume_feat, "B C RN SN -> (B RN SN) C")# Zhenyi Wan [2025/3/26] (N_rand*N_samples, C)
 
         # input_view = self.rgbfeat_fc(source_imgs_feat)  # LinGaoyuan_20240916: (N_rand, N_samples, n_views, 35) -> (N_rand, N_samples, n_views, 32)
         input_view = img_feat_sampled  # LinGaoyuan_20240916: (N_rand, N_samples, n_views, 32)
         input_view = rearrange(input_view, 'N_rand N_samples n_views C -> (N_rand N_samples) n_views C')
 
         if fea_volume is not None:
-            input_view = torch.cat((fea_volume_feat.unsqueeze(1), input_view), dim=1)
+            input_view = torch.cat((fea_volume_feat.unsqueeze(1), input_view), dim=1)# Zhenyi Wan [2025/3/26] (N_rand * N_samples, 1 + n_views, C)
 
-        output_view = self.view_transformer(input_view)
+        output_view = self.view_transformer(input_view)# Zhenyi Wan [2025/3/26] (N_rand*N_samples, 1+n_views, 32)
 
         # output_view = output_view.permute(2,0,1,3)  # LinGaoyuan_20240916: (N_rand, N_samples, n_views, 32) -> (n_views, N_rand, N_samples, 32)
 
-        input_occ = output_view[:,0,:]  # LinGaoyuan_20240916: (N_rand, N_samples, 1, 32)
-        view_feature = output_view[:,1:,:]  # LinGaoyuan_20240916: (N_rand, N_samples, NV - 1, 32)
+        # Zhenyi Wan [2025/3/26] seperate the dimension fea_volume added
+        input_occ = output_view[:,0,:]  # LinGaoyuan_20240916: (N_rand, N_samples, 1, 32)# Zhenyi Wan [2025/3/26] (N_rand*N_samples, 1, 32)
+        view_feature = output_view[:,1:,:]  # LinGaoyuan_20240916: (N_rand, N_samples, n_views, 32)# Zhenyi Wan [2025/3/26] (N_rand*N_samples, n_views, 32)
         # view_feature = output_view  # LinGaoyuan_20240916: (N_rand, N_samples, n_views, 32)
-        view_feature = rearrange(view_feature, '(N_rand N_samples) n_views C -> N_rand N_samples n_views C', N_rand = N_rand, N_samples = N_samples)
+        view_feature = rearrange(view_feature, '(N_rand N_samples) n_views C -> N_rand N_samples n_views C', N_rand = N_rand, N_samples = N_samples)# Zhenyi Wan [2025/3/26] (N_rand, N_samples, n_views, 32)
 
         x_weight = torch.cat([view_feature, dir_relative], dim=-1)  # LinGaoyuan_20240917: (N_rand, N_samples, n_views, 35)
         x_weight = self.linear_radianceweight_1_softmax(x_weight)  # LinGaoyuan_20240917: (N_rand, N_samples, n_views, 1)
@@ -507,11 +527,12 @@ class LinGaoyuan_ReTR_model(nn.Module):
         radiance = (source_imgs_feat * rearrange(weight,"N_rand N_samples n_views 1 -> n_views 1 N_rand N_samples", N_rand=N_rand, N_samples = N_samples)).sum(axis=0)
         radiance = rearrange(radiance, "DimRGB N_rand N_samples -> N_rand N_samples DimRGB")
 
-        input_occ = rearrange(input_occ, "(N_rand N_samples) C -> N_rand N_samples C", N_rand=N_rand, N_samples = N_samples)
+        input_occ = rearrange(input_occ, "(N_rand N_samples) C -> N_rand N_samples C", N_rand=N_rand, N_samples = N_samples)# Zhenyi Wan [2025/3/26] (N_rand, N_samples, 32)
         attn_mask = self.get_attn_mask(N_samples).type_as(radiance)
         input_occ = torch.cat((input_occ, self.fuse_layer(radiance), self.order_posenc(100 * z_vals.reshape(-1,z_vals.shape[-1])).type_as(radiance)), dim=-1)
-        radiance_tokens = self.RadianceToken(input_occ).unsqueeze(1)
-        input_occ = torch.cat((radiance_tokens, input_occ), dim=1)
+        # Zhenyi Wan [2025/3/26] (N_rand, N_samples, 32+32+8)
+        radiance_tokens = self.RadianceToken(input_occ).unsqueeze(1)# Zhenyi Wan [2025/3/26] (N_rand, N_samples, 72)
+        input_occ = torch.cat((radiance_tokens, input_occ), dim=1)# Zhenyi Wan [2025/3/26] (N_rand, N_samples+1, 72)
 
         output_occ = self.occu_transformer(input_occ)  # output_occ: (N_rand, N_sample+1, 72), input_occ: (N_rand, N_sample+1, 72)
 
@@ -564,7 +585,7 @@ class LinGaoyuan_ReTR_model(nn.Module):
         # output_view = output_view.permute(2,0,1,3)  # LinGaoyuan_20240916: (N_rand, N_samples, n_views, 32) -> (n_views, N_rand, N_samples, 32)
 
         input_occ = output_view[:,0,:]  # LinGaoyuan_20240916: (N_rand, N_samples, 1, 32)
-        view_feature = output_view[:,1:,:]  # LinGaoyuan_20240916: (N_rand, N_samples, NV - 1, 32)
+        view_feature = output_view[:,1:,:]  # LinGaoyuan_20240916: (N_rand, N_samples, N_views, 32)
         # view_feature = output_view  # LinGaoyuan_20240916: (N_rand, N_samples, n_views, 32)
         view_feature = rearrange(view_feature, '(N_rand N_samples) n_views C -> N_rand N_samples n_views C', N_rand = N_rand, N_samples = N_samples)
 
