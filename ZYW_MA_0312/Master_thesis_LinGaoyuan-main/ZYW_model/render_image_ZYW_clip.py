@@ -1,6 +1,6 @@
 import torch
 from collections import OrderedDict
-from render_ray_LinGaoyuan_clip import render_rays
+from model_and_model_component.render_ray_LinGaoyuan_clip import render_rays
 
 
 def render_single_image(

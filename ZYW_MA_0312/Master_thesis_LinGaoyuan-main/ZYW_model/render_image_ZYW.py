@@ -1,17 +1,16 @@
 import torch
 from collections import OrderedDict
-from render_ray_LinGaoyuan_clip import render_rays
+from model_and_model_component.render_ray_LinGaoyuan import render_rays
 
 
 def render_single_image(
     args,
     ray_sampler,
     ray_batch,
-    # model,
+    model,
     projector,
     chunk_size,
     N_samples,
-    model=None,
     inv_uniform=False,
     N_importance=0,
     det=False,
@@ -28,19 +27,6 @@ def render_single_image(
     use_updated_prior_depth=False,
     train_depth_prior=None,
     data_mode=None,
-    latent_code=None,
-    deformation_network=None,
-    pos_embedder=None,
-    latent_shape_code=None,
-    latent_appearance_code=None,
-    # model_building=None,
-    # model_street=None,
-    # featmaps_building=None,
-    # featmaps_street=None,
-    # feature_volume_building=None,
-    # feature_volume_street=None,
-    # latent_code_building=None,
-    # latent_code_street=None,
 ):
     """
     :param ray_sampler: RaySamplingSingleImage for this view
@@ -56,19 +42,11 @@ def render_single_image(
 
     all_ret = OrderedDict([("outputs_coarse", OrderedDict()), ("outputs_fine", OrderedDict())])
 
+    # Zhenyi Wan [2025/4/1] get the number of rays
     N_rays = ray_batch["ray_o"].shape[0]  # 360000 in train, 1440000 in eval
 
-    '''
-    LinGaoyuan_operation_20241001: if we want to generate the rendering image of car, the input variable latent_code is None and shape code&appearance code is exist.
-    we need to cat them together as latent code
-    '''
-    if len(latent_shape_code.shape) == 1:
-        latent_shape_code = latent_shape_code.unsqueeze(0)
-    if len(latent_appearance_code.shape) == 1:
-        latent_appearance_code = latent_appearance_code.unsqueeze(0)
-    latent_code = torch.cat((latent_shape_code,latent_appearance_code), dim=0)
-
-    for i in range(0, N_rays, chunk_size):
+    # Zhenyi Wan [2025/4/1] Use chunk_size to control the number of rays each time to calculate
+    for i in range(0, N_rays, chunk_size):# Zhenyi Wan [2025/4/1] chunk_size works as stride
         chunk = OrderedDict()
         for k in ray_batch:
             if k in ["camera", "depth_range", "src_rgbs", "src_cameras"]:
@@ -81,7 +59,7 @@ def render_single_image(
         '''
         LinGaoyuan_operation_20240918: In val process, if the data is from training dataset and use_updated_prior_depth is True,
         the updated prior depth will be used
-        '''
+        '''# Zhenyi Wan [2025/4/8] Validation
         if train_depth_prior is not None and use_updated_prior_depth is True:
             train_depth_prior_chunk = train_depth_prior[i : i + chunk_size]
         else:
@@ -90,11 +68,10 @@ def render_single_image(
         ret, _ = render_rays(
             args,
             chunk,
-            # featmaps,
+            model,
+            featmaps,
             projector=projector,
             N_samples=N_samples,
-            model=model,
-            featmaps=featmaps,
             inv_uniform=inv_uniform,
             N_importance=N_importance,
             det=det,
@@ -104,12 +81,11 @@ def render_single_image(
             sky_style_code=sky_style_code,
             # sky_style_model=sky_style_model,
             sky_model=sky_model,
-            mode = mode,
+            mode = 'val',
             feature_volume=feature_volume,
             use_updated_prior_depth=use_updated_prior_depth,
             train_depth_prior=train_depth_prior_chunk,
             data_mode = data_mode,
-            latent_code=latent_code,
         )
 
         # handle both coarse and fine outputs
@@ -118,6 +94,22 @@ def render_single_image(
             for k in ret["outputs_coarse"]:
                 if ret["outputs_coarse"][k] is not None:
                     all_ret["outputs_coarse"][k] = []
+
+            for k in ret["outputs_roughness"]:
+                if ret["outputs_roughness"][k] is not None:
+                    all_ret["outputs_roughness"][k] = []
+
+            for k in ret["outputs_metallic"]:
+                if ret["outputs_metallic"][k] is not None:
+                    all_ret["outputs_metallic"][k] = []
+
+            for k in ret["outputs_albedo"]:
+                if ret["outputs_albedo"][k] is not None:
+                    all_ret["outputs_albedo"][k] = []
+
+            for k in ret["outputs_normals"]:
+                if ret["outputs_normals"][k] is not None:
+                    all_ret["outputs_normals"][k] = []
 
             if ret["outputs_fine"] is None:
                 all_ret["outputs_fine"] = None
@@ -130,12 +122,29 @@ def render_single_image(
             if ret["outputs_coarse"][k] is not None:
                 all_ret["outputs_coarse"][k].append(ret["outputs_coarse"][k].cpu())
 
+        for k in ret["outputs_roughness"]:
+            if ret["outputs_roughness"][k] is not None:
+                all_ret["outputs_roughness"][k] = []
+
+        for k in ret["outputs_metallic"]:
+            if ret["outputs_metallic"][k] is not None:
+                all_ret["outputs_metallic"][k] = []
+
+        for k in ret["outputs_albedo"]:
+            if ret["outputs_albedo"][k] is not None:
+                all_ret["outputs_albedo"][k] = []
+
+        for k in ret["outputs_normals"]:
+            if ret["outputs_normals"][k] is not None:
+                all_ret["outputs_normals"][k] = []
+
         if ret["outputs_fine"] is not None:
             for k in ret["outputs_fine"]:
                 if ret["outputs_fine"][k] is not None:
                     all_ret["outputs_fine"][k].append(ret["outputs_fine"][k].cpu())
 
     rgb_strided = torch.ones(ray_sampler.H, ray_sampler.W, 3)[::render_stride, ::render_stride, :]
+    material_strided = torch.ones(ray_sampler.H, ray_sampler.W, 1)[::render_stride, ::render_stride, :]
     # merge chunk results and reshape
     for k in all_ret["outputs_coarse"]:
         if k == "random_sigma":
@@ -149,6 +158,34 @@ def render_single_image(
             (rgb_strided.shape[0], rgb_strided.shape[1], -1)
         )
         all_ret["outputs_coarse"][k] = tmp.squeeze()
+
+    for k in all_ret["outputs_roughness"]:
+
+        tmp = torch.cat(all_ret["outputs_roughness"][k], dim=0).reshape(
+            (rgb_strided.shape[0], rgb_strided.shape[1], -1)
+        )
+        all_ret["outputs_roughness"][k] = tmp.squeeze()
+
+    for k in all_ret["outputs_metallic"]:
+
+        tmp = torch.cat(all_ret["outputs_metallic"][k], dim=0).reshape(
+            (rgb_strided.shape[0], rgb_strided.shape[1], -1)
+        )
+        all_ret["outputs_metallic"][k] = tmp.squeeze()
+
+    for k in all_ret["outputs_albedo"]:
+
+        tmp = torch.cat(all_ret["outputs_albedo"][k], dim=0).reshape(
+            (rgb_strided.shape[0], rgb_strided.shape[1], -1)
+        )
+        all_ret["outputs_albedo"][k] = tmp.squeeze()
+
+    for k in all_ret["outputs_normals"]:
+
+        tmp = torch.cat(all_ret["outputs_normals"][k], dim=0).reshape(
+            (rgb_strided.shape[0], rgb_strided.shape[1], -1)
+        )
+        all_ret["outputs_normals"][k] = tmp.squeeze()
 
     # TODO: if invalid: replace with white
     # all_ret["outputs_coarse"]["rgb"][all_ret["outputs_coarse"]["mask"] == 0] = 1.0

@@ -11,6 +11,7 @@ from model_and_model_component.data_loaders import dataset_dict
 from model_and_model_component.render_ray_LinGaoyuan_clip import render_rays
 from model_and_model_component.render_image_LinGaoyuan_clip import render_single_image
 from model_and_model_component.model_LinGaoyuan_clip import GNTModel
+from ZYW_model.model_ZYW_clip import ZYW_GNTModel
 from model_and_model_component.sample_ray_LinGaoyuan import RaySamplerSingleImage
 from model_and_model_component.criterion_LinGaoyuan_clip import Criterion
 from utils import img2mse, mse2psnr, img_HWC2CHW, colorize, cycle, img2psnr
@@ -22,7 +23,6 @@ import imageio
 from PIL import Image
 
 import torchvision
-
 import matplotlib.pyplot as plt
 import cv2
 
@@ -192,6 +192,7 @@ def train(args):
             clip_shape_mapper_car = mapper(input_dim=768)
             clip_appearance_mapper_car = mapper(input_dim=768)
         else:
+            # Zhenyi Wan [2025/4/1] Decide if use the multi head attention manually written or from pytorch.
             if use_torch_attention_model is False:
                 clip_mapper_building = mapper_attention(input_dim=768)
                 clip_mapper_street = mapper_attention(input_dim=768)
@@ -228,8 +229,9 @@ def train(args):
     'LinGaoyuan_20240926: deformation network'
     clip_deformation_building = deformation(input_dim=63 + 128)  # dim_out_pos_emb = 63, dim_shape_code = 128
     clip_deformation_street = deformation(input_dim=63 + 128)  # dim_out_pos_emb = 63, dim_shape_code = 128
-
     clip_deformation_car = deformation(input_dim=63 + 128)  # dim_out_pos_emb = 63, dim_shape_code = 128
+
+    # Zhenyi Wan [2025/4/1] Position encoding
     clip_embedder = Embedder(
         input_dims=3,
         include_input=True,
@@ -238,6 +240,7 @@ def train(args):
         log_sampling=True,
         periodic_fns=[torch.sin, torch.cos],
     )
+
     'LinGaoyuan_20240924: create initial shape code and appearance code'
     # shape_code = torch.randn(1, 128, dtype=torch.float32, device=device)
     # appearance_code = torch.randn(1, 128, dtype=torch.float32, device=device)

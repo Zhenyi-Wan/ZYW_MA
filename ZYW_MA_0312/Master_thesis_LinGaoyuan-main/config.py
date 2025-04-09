@@ -295,6 +295,10 @@ def config_parser():
 
     parser.add_argument("--lambda_appearance_code", type=float, default=0.2, help="loss coefficient for clip loss in loss of appearance code")
 
+    ######### BRDF #########
+    parser.add_argument(
+        "--BRDF_model", action="store_true", help="whether or not to use BRDF model"
+    )
 
     ########## rendering options ##########
     parser.add_argument(

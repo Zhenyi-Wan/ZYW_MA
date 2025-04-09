@@ -301,7 +301,7 @@ class ZYW_ReTR_model(nn.Module):
 
         # input_view = self.rgbfeat_fc(source_imgs_feat)  # LinGaoyuan_20240916: (N_rand, N_samples, n_views, 35) -> (N_rand, N_samples, n_views, 32)
         input_view = img_feat_sampled  # LinGaoyuan_20240916: (N_rand, N_samples, n_views, 32)
-        input_view = rearrange(input_view, 'N_rand N_samples n_views C -> (N_rand N_samples) n_views C')\
+        input_view = rearrange(input_view, 'N_rand N_samples n_views C -> (N_rand N_samples) n_views C')
 
         # Zhenyi Wan [2025/3/14] BRDF Features Encoder:Use four transformers as encoder for metallic, roughness, albedo and normals. The inputs are all the same,
         # sampled scr image features.

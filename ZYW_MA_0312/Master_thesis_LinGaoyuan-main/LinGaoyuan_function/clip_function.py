@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 import numpy as np
 
+# Zhenyi Wan [2025/4/1] A MLP, transforms an input feature vector into a latent code.
 class mapper(nn.Module):
     def __init__(self,
                  input_dim = 512,
@@ -32,6 +33,7 @@ class mapper(nn.Module):
         return latent_code
 
 
+# Zhenyi Wan [2025/4/1] Used for feature transformation. Transform latent code
 class deformation(nn.Module):
     def __init__(self,
                  input_dim = 128,

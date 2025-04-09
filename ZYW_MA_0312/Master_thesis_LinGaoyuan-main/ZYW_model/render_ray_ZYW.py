@@ -344,7 +344,7 @@ def render_rays(
 
     N_rays, N_samples = pts.shape[:2]
 
-    # Zhenyi Wan [2025/4/8] Use the model
+    # Zhenyi Wan [2025/4/8] Use the model,change the ReTR part. add additonal BRDF outputs
     if args.use_retr_model is True:
         if args.use_retr_feature_extractor is True:
             if args.use_volume_feature is not True:
@@ -357,6 +357,9 @@ def render_rays(
                     featmaps=featmaps,
                 )
                 rgb = model.net_coarse(pts, ray_batch, rgb_feat, z_vals, mask, ray_d, ray_diff, ret_alpha=ret_alpha)
+                if args.BRDF_model is True:
+                    BRDF_Buffer = model.net_coarse.forward_BDRF(pts, ray_batch, rgb_feat, z_vals, mask, ray_d, ray_diff,
+                                                                ret_alpha=ret_alpha)
 
                 # rgb = model.net_coarse.forward_retr(pts, ray_batch, featmaps, z_vals, ret_alpha=ret_alpha)
             else:
@@ -369,6 +372,9 @@ def render_rays(
                     featmaps=featmaps,
                 )
                 rgb = model.net_coarse.forward_retr(pts, ray_batch, rgb_feat, z_vals, mask, ray_d, ray_diff, ret_alpha=ret_alpha, fea_volume=feature_volume)
+                if args.BRDF_model is True:
+                    BRDF_Buffer = model.net_coarse.forward_BDRF(pts, ray_batch, rgb_feat, z_vals, mask, ray_d, ray_diff,
+                                                                ret_alpha=ret_alpha)
                 # rgb = model.net_coarse.forward_retr(pts, ray_batch, featmaps, z_vals, fea_volume=feature_volume, ret_alpha=ret_alpha)
         else:
             'LinGaoyuan_20240930: retr model + model_and_model_component feature extractor'
@@ -385,8 +391,12 @@ def render_rays(
             # )  # [N_rays, N_samples], should at least have 2 observations
 
             rgb = model.net_coarse(pts, ray_batch, rgb_feat, z_vals, mask, ray_d, ray_diff, ret_alpha=ret_alpha)
+            if args.BRDF_model is True:
+                BRDF_Buffer = model.net_coarse.forward_BDRF(pts, ray_batch, rgb_feat, z_vals, mask, ray_d, ray_diff,
+                                                            ret_alpha=ret_alpha)
     else:
         'LinGaoyuan_20240930: model_and_model_component model + model_and_model_component feature extractor'
+        # Zhenyi Wan [2025/4/8] GNT model
         rgb_feat, ray_diff, mask = projector.compute(
             pts,
             ray_batch["camera"],
@@ -398,7 +408,19 @@ def render_rays(
 
     if ret_alpha:
         rgb, weights = rgb[:, 0:3], rgb[:, 3:]
+        # Zhenyi Wan [2025/4/8] Extract BRDF values and weight
+        metallic, metallic_weights = BRDF_Buffer.metallic[:, 0:1], BRDF_Buffer.metallic[:, 1:]# Zhenyi Wan [2025/4/9] [N_rand, 1]; [N_rand, N_samples]
+        roughness, roughness_weights = BRDF_Buffer.roughness[:, 0:1], BRDF_Buffer.roughness[:, 1:]
+        albedo, albedo_weights = BRDF_Buffer.albedo[:, 0:3], BRDF_Buffer.albedo[:, 3:]# Zhenyi Wan [2025/4/9] [N_rand, 3]; [N_rand, N_samples]
+        normals, normals_weights = BRDF_Buffer.normals[:, 0:3], BRDF_Buffer.normals[:, 3:]
+
         depth_map = torch.sum(weights * z_vals, dim=-1)
+        # Zhenyi Wan [2025/4/9] BRDF depth maps
+        metallic_dmap = torch.sum(metallic_weights * z_vals, dim=-1)# Zhenyi Wan [2025/4/9](N_rand,)
+        roughness_dmap = torch.sum(roughness_weights * z_vals, dim=-1)
+        albedo_dmap = torch.sum(albedo_weights * z_vals, dim=-1)
+        normals_dmap = torch.sum(normals_weights * z_vals, dim=-1)
+
 
         'LinGaoyuan_operation_20240906: add cov of depth prediction based on Uncle SLAM formular 5'
         depth_pred = depth_map[..., None]
@@ -445,6 +467,11 @@ def render_rays(
     # #     rgb = rgb + rgb_sky
 
     ret["outputs_coarse"] = {"rgb": rgb, "weights": weights, "depth": depth_map, "rgb_sky": rgb_sky, "depth_sky": depth_sky, "depth_cov": depth_cov}
+    # Zhenyi Wan [2025/4/9] return BRDF_Buffer
+    ret["outputs_roughness"] = {"roughness":roughness, "roughness_weights": roughness_weights, "roughness_dmap": roughness_dmap}
+    ret["outputs_metallic"] = {"metallic":metallic, "metallic_weights": metallic_weights, "metallic_dmap": metallic_dmap}
+    ret["outputs_albedo"] = {"albedo":albedo, "albedo_weights": albedo_weights, "albedo_dmap": albedo_dmap}
+    ret["outputs_normals"] = {"normals":normals, "normals_weights": normals_weights, "normals_dmap": normals_dmap}
 
     if N_importance > 0:
         # detach since we would like to decouple the coarse and fine networks
