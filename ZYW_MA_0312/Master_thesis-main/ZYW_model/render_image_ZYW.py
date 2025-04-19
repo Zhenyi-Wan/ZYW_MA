@@ -1,6 +1,9 @@
 import torch
 from collections import OrderedDict
-from model_and_model_component.render_ray_LinGaoyuan import render_rays
+from ZYW_model.render_ray_ZYW import render_rays
+
+from ZYW_PBR_functions.field_ZYW import AppShadingNetwork
+from ZYW_PBR_functions.PBR_MI_ZYW import NeILFPBR
 
 
 def render_single_image(
@@ -39,8 +42,18 @@ def render_single_image(
     :param single_net: if True, will use single network, can be cued with both coarse and fine points
     :return: {'outputs_coarse': {'rgb': numpy, 'depth': numpy, ...}, 'outputs_fine': {}}
     """
+    # Zhenyi Wan [2025/4/17] Render rays into an image
 
     all_ret = OrderedDict([("outputs_coarse", OrderedDict()), ("outputs_fine", OrderedDict())])
+
+    default_cfg = {
+        # shader network for NeRO method
+        'shader_config': {},
+    }
+    cfg = {**default_cfg}
+
+    NeRO_PBR = AppShadingNetwork(cfg['shader_config'])
+    NeILF_PBR = NeILFPBR()
 
     # Zhenyi Wan [2025/4/1] get the number of rays
     N_rays = ray_batch["ray_o"].shape[0]  # 360000 in train, 1440000 in eval
@@ -90,26 +103,39 @@ def render_single_image(
 
         # handle both coarse and fine outputs
         # cache chunk results on cpu
+        # Zhenyi Wan [2025/4/17] set the list to be zero at first
         if i == 0:
             for k in ret["outputs_coarse"]:
                 if ret["outputs_coarse"][k] is not None:
                     all_ret["outputs_coarse"][k] = []
 
-            for k in ret["outputs_roughness"]:
-                if ret["outputs_roughness"][k] is not None:
-                    all_ret["outputs_roughness"][k] = []
+            if ret["outputs_roughness"] is None:
+                all_ret["outputs_roughness"] = None
+            else:
+                for k in ret["outputs_roughness"]:
+                    if ret["outputs_roughness"][k] is not None:
+                        all_ret["outputs_roughness"][k] = []
 
-            for k in ret["outputs_metallic"]:
-                if ret["outputs_metallic"][k] is not None:
-                    all_ret["outputs_metallic"][k] = []
+            if ret["outputs_metallic"] is None:
+                all_ret["outputs_metallic"] = None
+            else:
+                for k in ret["outputs_metallic"]:
+                    if ret["outputs_metallic"][k] is not None:
+                        all_ret["outputs_metallic"][k] = []
 
-            for k in ret["outputs_albedo"]:
-                if ret["outputs_albedo"][k] is not None:
-                    all_ret["outputs_albedo"][k] = []
+            if ret["outputs_albedo"] is None:
+                all_ret["outputs_albedo"] = None
+            else:
+                for k in ret["outputs_albedo"]:
+                    if ret["outputs_albedo"][k] is not None:
+                        all_ret["outputs_albedo"][k] = []
 
-            for k in ret["outputs_normals"]:
-                if ret["outputs_normals"][k] is not None:
-                    all_ret["outputs_normals"][k] = []
+            if ret["outputs_normals"] is None:
+                all_ret["outputs_normals"] = None
+            else:
+                for k in ret["outputs_normals"]:
+                    if ret["outputs_normals"][k] is not None:
+                        all_ret["outputs_normals"][k] = []
 
             if ret["outputs_fine"] is None:
                 all_ret["outputs_fine"] = None
@@ -122,29 +148,48 @@ def render_single_image(
             if ret["outputs_coarse"][k] is not None:
                 all_ret["outputs_coarse"][k].append(ret["outputs_coarse"][k].cpu())
 
-        for k in ret["outputs_roughness"]:
-            if ret["outputs_roughness"][k] is not None:
-                all_ret["outputs_roughness"][k] = []
+        if ret["outputs_roughness"] is not None:
+            for k in ret["outputs_roughness"]:
+                if ret["outputs_roughness"][k] is not None:
+                    all_ret["outputs_roughness"][k].append(ret["outputs_roughness"][k].cpu())
 
-        for k in ret["outputs_metallic"]:
-            if ret["outputs_metallic"][k] is not None:
-                all_ret["outputs_metallic"][k] = []
+        if ret["outputs_metallic"] is not None:
+            for k in ret["outputs_metallic"]:
+                if ret["outputs_metallic"][k] is not None:
+                    all_ret["outputs_metallic"][k].append(ret["outputs_metallic"][k].cpu())
 
-        for k in ret["outputs_albedo"]:
-            if ret["outputs_albedo"][k] is not None:
-                all_ret["outputs_albedo"][k] = []
+        if ret["outputs_albedo"] is not None:
+            for k in ret["outputs_albedo"]:
+                if ret["outputs_albedo"][k] is not None:
+                    all_ret["outputs_albedo"][k].append(ret["outputs_albedo"][k].cpu())
 
-        for k in ret["outputs_normals"]:
-            if ret["outputs_normals"][k] is not None:
-                all_ret["outputs_normals"][k] = []
+        if ret["outputs_normals"] is not None:
+            for k in ret["outputs_normals"]:
+                if ret["outputs_normals"][k] is not None:
+                    all_ret["outputs_normals"][k].append(ret["outputs_normals"][k].cpu())
 
         if ret["outputs_fine"] is not None:
             for k in ret["outputs_fine"]:
                 if ret["outputs_fine"][k] is not None:
                     all_ret["outputs_fine"][k].append(ret["outputs_fine"][k].cpu())
 
-    rgb_strided = torch.ones(ray_sampler.H, ray_sampler.W, 3)[::render_stride, ::render_stride, :]
-    material_strided = torch.ones(ray_sampler.H, ray_sampler.W, 1)[::render_stride, ::render_stride, :]
+        points = torch.cat(all_ret["outputs_coarse"]["points"], dim=0)
+        ray_d = ray_batch["ray_d"]
+        view_d = -ray_d
+
+        if all_ret["outputs_albedo"] is not None and all_ret["outputs_normals"] is not None and all_ret["outputs_roughness"] is not None and all_ret["outputs_metallic"] is not None:
+            pred_roughness = torch.cat(all_ret["outputs_roughness"]["roughness"], dim=0)
+            pred_metallic = torch.cat(all_ret["outputs_metallic"]["metallic"], dim=0)
+            pred_albedo = torch.cat(all_ret["outputs_albedo"]["albedo"], dim=0)
+            pred_normals = torch.cat(all_ret["outputs_normals"]["normals"], dim=0)
+            if args.use_NeROPBR is True:
+                color_NeRO, _ = NeRO_PBR(points, pred_roughness, pred_metallic, pred_albedo, pred_normals, ray_d)
+            if args.use_NeILFPBR is True:
+                color_NeILF = NeILF_PBR(points, pred_roughness, pred_metallic, pred_albedo, pred_normals, view_d)
+
+    rgb_strided = torch.ones(ray_sampler.H, ray_sampler.W, 3)[::render_stride, ::render_stride, :] # Zhenyi Wan [2025/4/17] [H//3,W//s,3]
+    # Zhenyi Wan [2025/4/17] add material stride, the channel is 1 for roughness and metallic
+    material_strided = torch.ones(ray_sampler.H, ray_sampler.W, 1)[::render_stride, ::render_stride, :]# Zhenyi Wan [2025/4/17] [H//3,W//s,1]
     # merge chunk results and reshape
     for k in all_ret["outputs_coarse"]:
         if k == "random_sigma":
@@ -159,33 +204,42 @@ def render_single_image(
         )
         all_ret["outputs_coarse"][k] = tmp.squeeze()
 
-    for k in all_ret["outputs_roughness"]:
+    if ret["outputs_roughness"] is not None:
+        for k in all_ret["outputs_roughness"]:
+            tmp = torch.cat(all_ret["outputs_roughness"][k], dim=0).reshape(
+                (material_strided.shape[0], material_strided.shape[1], -1)
+            )
+            all_ret["outputs_roughness"][k] = tmp  # Zhenyi Wan [2025/4/17] the roughness channel chould not be deleted[H//s, W//s, 1],[H//s, W//s, N_samples]
 
-        tmp = torch.cat(all_ret["outputs_roughness"][k], dim=0).reshape(
-            (rgb_strided.shape[0], rgb_strided.shape[1], -1)
-        )
-        all_ret["outputs_roughness"][k] = tmp.squeeze()
+    if ret["outputs_metallic"] is not None:
+        for k in all_ret["outputs_metallic"]:
+            tmp = torch.cat(all_ret["outputs_metallic"][k], dim=0).reshape(
+                (material_strided.shape[0], material_strided.shape[1], -1)
+            )
+            all_ret["outputs_metallic"][k] = tmp
 
-    for k in all_ret["outputs_metallic"]:
 
-        tmp = torch.cat(all_ret["outputs_metallic"][k], dim=0).reshape(
-            (rgb_strided.shape[0], rgb_strided.shape[1], -1)
-        )
-        all_ret["outputs_metallic"][k] = tmp.squeeze()
+    if ret["outputs_albedo"] is not None:
+        for k in all_ret["outputs_albedo"]:
+            tmp = torch.cat(all_ret["outputs_albedo"][k], dim=0).reshape(
+                (rgb_strided.shape[0], rgb_strided.shape[1], -1)
+            )
+            all_ret["outputs_albedo"][k] = tmp
 
-    for k in all_ret["outputs_albedo"]:
+    if ret["outputs_normals"] is not None:
+        for k in all_ret["outputs_normals"]:
+            tmp = torch.cat(all_ret["outputs_normals"][k], dim=0).reshape(
+                (rgb_strided.shape[0], rgb_strided.shape[1], -1)
+            )
+            all_ret["outputs_normals"][k] = tmp
 
-        tmp = torch.cat(all_ret["outputs_albedo"][k], dim=0).reshape(
-            (rgb_strided.shape[0], rgb_strided.shape[1], -1)
-        )
-        all_ret["outputs_albedo"][k] = tmp.squeeze()
+    if color_NeRO is not None:
+        tmp = color_NeRO.reshape((rgb_strided.shape[0], rgb_strided.shape[1], -1))
+        all_ret["color_NeRO"] = tmp
 
-    for k in all_ret["outputs_normals"]:
-
-        tmp = torch.cat(all_ret["outputs_normals"][k], dim=0).reshape(
-            (rgb_strided.shape[0], rgb_strided.shape[1], -1)
-        )
-        all_ret["outputs_normals"][k] = tmp.squeeze()
+    if color_NeILF is not None:
+        tmp = color_NeILF.reshape((rgb_strided.shape[0], rgb_strided.shape[1], -1))
+        all_ret["color_NeILF"] = tmp
 
     # TODO: if invalid: replace with white
     # all_ret["outputs_coarse"]["rgb"][all_ret["outputs_coarse"]["mask"] == 0] = 1.0

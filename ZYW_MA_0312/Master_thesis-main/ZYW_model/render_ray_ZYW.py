@@ -408,20 +408,14 @@ def render_rays(
 
     if ret_alpha:
         rgb, weights = rgb[:, 0:3], rgb[:, 3:]
-        # Zhenyi Wan [2025/4/8] Extract BRDF values and weight
-        metallic, metallic_weights = BRDF_Buffer.metallic[:, 0:1], BRDF_Buffer.metallic[:, 1:]# Zhenyi Wan [2025/4/9] [N_rand, 1]; [N_rand, N_samples]
-        roughness, roughness_weights = BRDF_Buffer.roughness[:, 0:1], BRDF_Buffer.roughness[:, 1:]
-        albedo, albedo_weights = BRDF_Buffer.albedo[:, 0:3], BRDF_Buffer.albedo[:, 3:]# Zhenyi Wan [2025/4/9] [N_rand, 3]; [N_rand, N_samples]
-        normals, normals_weights = BRDF_Buffer.normals[:, 0:3], BRDF_Buffer.normals[:, 3:]
-
         depth_map = torch.sum(weights * z_vals, dim=-1)# Zhenyi Wan [2025/4/9](N_rand,)
         PBR_pts = depth_map * ray_d + ray_o # Zhenyi Wan [2025/4/10] (N_rand,3)
-        # Zhenyi Wan [2025/4/9] BRDF depth maps
-        metallic_dmap = torch.sum(metallic_weights * z_vals, dim=-1)# Zhenyi Wan [2025/4/9](N_rand,)
-        roughness_dmap = torch.sum(roughness_weights * z_vals, dim=-1)
-        albedo_dmap = torch.sum(albedo_weights * z_vals, dim=-1)
-        normals_dmap = torch.sum(normals_weights * z_vals, dim=-1)
-
+        # Zhenyi Wan [2025/4/8] Extract BRDF values and weight
+        if BRDF_Buffer is not None:
+            metallic, metallic_weights = BRDF_Buffer.metallic[:, 0:1], BRDF_Buffer.metallic[:, 1:]# Zhenyi Wan [2025/4/9] [N_rand, 1]; [N_rand, N_samples]
+            roughness, roughness_weights = BRDF_Buffer.roughness[:, 0:1], BRDF_Buffer.roughness[:, 1:]
+            albedo, albedo_weights = BRDF_Buffer.albedo[:, 0:3], BRDF_Buffer.albedo[:, 3:]# Zhenyi Wan [2025/4/9] [N_rand, 3]; [N_rand, N_samples]
+            normals, normals_weights = BRDF_Buffer.normals[:, 0:3], BRDF_Buffer.normals[:, 3:]
 
         'LinGaoyuan_operation_20240906: add cov of depth prediction based on Uncle SLAM formular 5'
         depth_pred = depth_map[..., None]
@@ -434,6 +428,13 @@ def render_rays(
     else:
         weights = None
         depth_map = None
+        PBR_pts = None
+
+        if BRDF_Buffer is not None:
+            metallic_weights = None
+            roughness_weights = None
+            albedo_weights = None
+            normals_weights = None
 
         depth_cov = None
         depth_sky = None
@@ -470,10 +471,16 @@ def render_rays(
     # Zhenyi Wan [2025/4/10] add the pts output for PBR rendering
     ret["outputs_coarse"] = {"rgb": rgb, "weights": weights, "depth": depth_map, "rgb_sky": rgb_sky, "depth_sky": depth_sky, "depth_cov": depth_cov, "points":PBR_pts}
     # Zhenyi Wan [2025/4/9] return BRDF_Buffer
-    ret["outputs_roughness"] = {"roughness":roughness, "roughness_weights": roughness_weights, "roughness_dmap": roughness_dmap}
-    ret["outputs_metallic"] = {"metallic":metallic, "metallic_weights": metallic_weights, "metallic_dmap": metallic_dmap}
-    ret["outputs_albedo"] = {"albedo":albedo, "albedo_weights": albedo_weights, "albedo_dmap": albedo_dmap}
-    ret["outputs_normals"] = {"normals":normals, "normals_weights": normals_weights, "normals_dmap": normals_dmap}
+    if BRDF_Buffer is not None:
+        ret["outputs_roughness"] = {"roughness":roughness, "roughness_weights": roughness_weights}
+        ret["outputs_metallic"] = {"metallic":metallic, "metallic_weights": metallic_weights}
+        ret["outputs_albedo"] = {"albedo":albedo, "albedo_weights": albedo_weights}
+        ret["outputs_normals"] = {"normals":normals, "normals_weights": normals_weights}
+    else:
+        ret["outputs_roughness"] = None
+        ret["outputs_metallic"] = None
+        ret["outputs_albedo"] = None
+        ret["outputs_normals"] = None
 
     if N_importance > 0:
         # detach since we would like to decouple the coarse and fine networks

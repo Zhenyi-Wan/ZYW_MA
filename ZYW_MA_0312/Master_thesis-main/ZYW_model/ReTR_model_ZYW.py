@@ -249,7 +249,7 @@ class ZYW_ReTR_model(nn.Module):
         output_occ = self.occu_transformer(input_occ)
 
         output_ray = self.ray_transformer(output_occ[:,:1], output_occ[:,1:])
-        weight = self.ray_transformer.atten_weight.squeeze()
+        weight = self.ray_transformer.atten_weight.squeeze()# Zhenyi Wan [2025/3/20] (N_rand, N_samples)
 
         rgb = torch.sigmoid(self.RadianceMLP(output_ray))
 

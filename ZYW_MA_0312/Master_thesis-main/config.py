@@ -300,6 +300,14 @@ def config_parser():
         "--BRDF_model", action="store_true", help="whether or not to use BRDF model"
     )
 
+    parser.add_argument(
+        "--use_NeILFPBR", action="store_true", help="whether or not to use NeILFPBR to rerender RGB"
+    )
+
+    parser.add_argument(
+        "--use_NeROPBR", action="store_true", help="whether or not to use NeROPBR to rerender RGB"
+    )
+
     ########## rendering options ##########
     parser.add_argument(
         "--N_samples", type=int, default=64, help="number of coarse samples per ray"

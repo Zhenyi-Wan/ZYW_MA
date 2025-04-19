@@ -12,7 +12,7 @@ from ZYW_model.render_ray_ZYW import render_rays
 from ZYW_model.render_image_ZYW import render_single_image
 from ZYW_model.model_ZYW import Model
 from model_and_model_component.sample_ray_LinGaoyuan import RaySamplerSingleImage
-from model_and_model_component.criterion_LinGaoyuan import Criterion
+from ZYW_model.criterion_ZYW import Criterion
 from utils import img2mse, mse2psnr, img_HWC2CHW, colorize, cycle, img2psnr
 import config
 import torch.distributed as dist
@@ -322,6 +322,19 @@ def train(args):
 
             loss, scalars_to_log = criterion(ret["outputs_coarse"], ray_batch, scalars_to_log)
 
+            loss_NeRO = None
+            loss_NeILF = None
+            if args.use_NeROPBR is True:
+                # NeRO loss
+                loss_NeRO, scalars_to_log = criterion.NeRO_loss(ret["outputs_coarse"], ret["outputs_roughness"],
+                                                                ret["outputs_metallic"], ret["outputs_albedo"],
+                                                                ret["outputs_normals"], ray_batch, scalars_to_log)
+            if args.use_NeILFPBR is True:
+                # NeILF loss
+                loss_NeILF, scalars_to_log = criterion.NeILF_loss(ret["outputs_coarse"], ret["outputs_roughness"],
+                                                                  ret["outputs_metallic"], ret["outputs_albedo"],
+                                                                  ret["outputs_normals"], ray_batch, scalars_to_log)
+
             'loss of sky area, add by LinGaoyuan'
             loss_sky_rgb = criterion.sky_loss_rgb(ret["outputs_coarse"], ray_batch)
 
@@ -345,7 +358,8 @@ def train(args):
             'LinGaoyuan_operation_20240905: update prior depth with depth prediction if epoch reach preset value'
             'LinGaoyuan_operation_20240920: add a indicator(args.update_prior_depth) to determine whether update depth prior or not'
             if use_updated_prior_depth and args.update_prior_depth is True:
-                train_depth_pred = ret["outputs_coarse"]["depth"].detach()
+                train_depth_pred = ret["outputs_coarse"]["depth"].detach() # Zhenyi Wan [2025/4/16] (N_rand,)
+                # Zhenyi Wan [2025/4/16] write back the depth map for prior depth
                 train_depth_prior[ray_batch["selected_inds"]] = train_depth_pred[...,None]
                 if args.resize_image is True:
                     train_depth_prior = train_depth_prior.reshape(1, args.image_resize_H, args.image_resize_W)
@@ -354,8 +368,19 @@ def train(args):
                 train_prior_depth_values[ray_batch["idx"], ...] = train_depth_prior
                 # print('finish update train prior depth value in epoch: {}'.format(epoch), 'step: {}'.format(global_step))
 
-            loss.backward()
+            #loss.backward()
+            total_loss = loss
+            if loss_NeRO is not None:# Zhenyi Wan [2025/4/16] Add the PBR loss to total loss for backward
+                total_loss += loss_NeRO
+            if loss_NeILF is not None:
+                total_loss += loss_NeILF
+            total_loss.backward()
+
             scalars_to_log["loss"] = loss.item()
+            if loss_NeRO is not None:# Zhenyi Wan [2025/4/16] Add PBr loss to log
+                scalars_to_log["loss_NeRO"] = loss_NeRO.item()
+            if loss_NeILF is not None:
+                scalars_to_log["loss_NeILF"] = loss_NeILF.item()
             model.optimizer.step()
             model.scheduler.step()
 
@@ -395,6 +420,17 @@ def train(args):
                     mse_error = img2mse(ret["outputs_coarse"]["rgb"], ray_batch["rgb"]).item()
                     scalars_to_log["train/coarse-loss"] = mse_error
                     scalars_to_log["train/coarse-psnr-training-batch"] = mse2psnr(mse_error)
+
+                    # Zhenyi Wan [2025/4/16] NeROPBR loss and PSNR
+                    if loss_NeRO is not None:
+                        scalars_to_log["train/NeROPBR-loss"] = loss_NeRO.item()
+                        scalars_to_log["train/NeROPBR-psnr-training-batch"] = mse2psnr(loss_NeRO.item())
+
+                    # Zhenyi Wan [2025/4/16] NeILFPBR loss and PSNR
+                    if loss_NeILF is not None:
+                        scalars_to_log["train/NeILFPBR-loss"] = loss_NeILF.item()
+                        scalars_to_log["train/NeILFPBR-psnr-training-batch"] = mse2psnr(loss_NeILF.item())
+
                     if ret["outputs_fine"] is not None:
                         mse_error = img2mse(ret["outputs_fine"]["rgb"], ray_batch["rgb"]).item()
                         scalars_to_log["train/fine-loss"] = mse_error
@@ -408,9 +444,16 @@ def train(args):
                     print("depth loss: {}".format(loss_depth_value), "depth cov: {}".format(ret["outputs_coarse"]["depth_cov"]))
 
                     print("sky model lr: {}".format(sky_model_lr), "sky_style_lr: {}".format(sky_style_lr), "sky_loss: {}".format(loss_sky_rgb))
+
+                    if loss_NeRO is not None:
+                        print(">>> NeROPBR loss: {:.6f}".format(loss_NeRO))
+
+                    if loss_NeILF is not None:
+                        print(">>> NeILFPBR loss: {:.6f}".format(loss_NeILF))
+
                     print("each iter time {:.05f} seconds".format(dt))
 
-                if global_step % args.i_weights == 0:
+                if global_step % args.i_weights == 0: # Zhenyi Wan [2025/4/16] every i_weights step save the model
                     print("Saving checkpoints at {} to {}...".format(global_step, out_folder))
                     fpath = os.path.join(out_folder, "model_{:06d}.pth".format(global_step))
                     model.save_model(fpath)
@@ -480,7 +523,7 @@ def train(args):
                     H, W = tmp_ray_sampler.H, tmp_ray_sampler.W
                     gt_img = tmp_ray_sampler.rgb.reshape(H, W, 3)
 
-                    'LinGaoyuan_operation_20240830: set create depth image by default even N_inportance is 0 in order to create depth image'
+                    'LinGaoyuan_operation_20240830: set create depth image by default even N_importance is 0 in order to create depth image'
                     'LinGaoyuan_operation_20240920: set data_mode to val when use val dataset in val process'
                     log_view(
                         global_step,
@@ -513,7 +556,7 @@ def train(args):
                     # filename_gt = os.path.join(out_folder, 'img_gt.png')
                     # torchvision.io.write_png(torch.tensor(gt_img * 255).to(torch.uint8).permute(2, 0, 1), filename_gt)
 
-                    'LinGaoyuan_operation_20240830: set create depth image by default even N_inportance is 0'
+                    'LinGaoyuan_operation_20240830: set create depth image by default even N_importance is 0'
                     '''
                     LinGaoyuan_operation_20240918: use updated prior depth if use train sampler and use_updated_prior_depth is True. 
                     set data_mode=train in this situation
@@ -567,7 +610,7 @@ def log_view(
     train_prior_depth_values=None,
     use_updated_prior_depth=False,
 ):
-    model.switch_to_eval()
+    model.switch_to_eval() # Zhenyi Wan [2025/4/17] switch to validation mode
     with torch.no_grad():
         ray_batch = ray_sampler.get_all()
 
@@ -582,7 +625,7 @@ def log_view(
         '''
         if data_mode == 'train' and use_updated_prior_depth is True:
             print('use updated prior depth for training dataset in val process')
-            train_depth_prior = (train_prior_depth_values[ray_batch["idx"], ...]).reshape(-1, 1)
+            train_depth_prior = (train_prior_depth_values[ray_batch["idx"], ...]).reshape(-1, 1) # Zhenyi Wan [2025/4/17] [N_rays,1]
         else:
             train_depth_prior = None
 
@@ -620,29 +663,55 @@ def log_view(
             data_mode=data_mode,
         )
 
-    average_im = ray_sampler.src_rgbs.cpu().mean(dim=(0, 1))
+    color_NeRO = None
+    color_NeILF = None
+    roughness_map = None
+    metallic_map = None
+    albedo_map = None
+    normals_map = None
+    BRDF_im = None
+
+    average_im = ray_sampler.src_rgbs.cpu().mean(dim=(0, 1)) # Zhenyi Wan [2025/4/17] Average to every batch and view [H,W,3]
 
     'get the mask of sky area'
     H = ray_sampler.H
     W = ray_sampler.W
-    sky_mask = ray_sampler.sky_mask.reshape(H, W, 1)
+    sky_mask = ray_sampler.sky_mask.reshape(H, W, 1) # Zhenyi Wan [2025/4/17] [H,W,1]
     # sky_mask = sky_mask.permute(1, 2, 0)
 
     depth_value = ray_sampler.depth_value.reshape(H, W, 1).squeeze().cpu()
     # plt.imshow(depth_value)
     # plt.show()
 
+    # Zhenyi Wan [2025/4/17] down sampling
     if args.render_stride != 1:
         print(gt_img.shape)
-        gt_img = gt_img[::render_stride, ::render_stride]
-        average_im = average_im[::render_stride, ::render_stride]
+        gt_img = gt_img[::render_stride, ::render_stride] # Zhenyi Wan [2025/4/17] [H//s, W//s, 3]
+        average_im = average_im[::render_stride, ::render_stride]# Zhenyi Wan [2025/4/17] [H//s, W//s, 3]
 
-        sky_mask = sky_mask[::render_stride, ::render_stride]
+        sky_mask = sky_mask[::render_stride, ::render_stride] # Zhenyi Wan [2025/4/17] [H//s, W//s, 3]
 
-    rgb_gt = img_HWC2CHW(gt_img)
-    average_im = img_HWC2CHW(average_im)
+    rgb_gt = img_HWC2CHW(gt_img) # Zhenyi Wan [2025/4/17] [3,H//s,W//s]
+    average_im = img_HWC2CHW(average_im)# Zhenyi Wan [2025/4/17] [3,H//s,W//s]
 
-    rgb_pred = img_HWC2CHW(ret["outputs_coarse"]["rgb"].detach().cpu())
+    rgb_pred = img_HWC2CHW(ret["outputs_coarse"]["rgb"].detach().cpu())# Zhenyi Wan [2025/4/17] [3,H//s,W//s]
+    if ret.get("color_NeRO") is not None:
+        color_NeRO = img_HWC2CHW(ret["color_NeRO"].detach().cpu())
+
+    if ret.get("color_NeILF") is not None:
+        color_NeILF = img_HWC2CHW(ret["color_NeILF"].detach().cpu())
+
+    if ret.get("outputs_roughness") is not None and ret["outputs_roughness"].get("roughness") is not None:
+        roughness_map = img_HWC2CHW(ret["outputs_roughness"]["roughness"].detach().cpu())  # [1,H//s,W//s]
+
+    if ret.get("outputs_metallic") is not None and ret["outputs_metallic"].get("metallic") is not None:
+        metallic_map = img_HWC2CHW(ret["outputs_metallic"]["metallic"].detach().cpu())  # [1,H//s,W//s]
+
+    if ret.get("outputs_albedo") is not None and ret["outputs_albedo"].get("albedo") is not None:
+        albedo_map = img_HWC2CHW(ret["outputs_albedo"]["albedo"].detach().cpu())  # [3,H//s,W//s]
+
+    if ret.get("outputs_normals") is not None and ret["outputs_normals"].get("normals") is not None:
+        normals_map = img_HWC2CHW(ret["outputs_normals"]["normals"].detach().cpu())  # [3,H//s,W//s]
 
     rgb_sky = img_HWC2CHW(ret["outputs_coarse"]["rgb_sky"].detach().cpu())
 
@@ -655,13 +724,26 @@ def log_view(
     # softmax_func = torch.nn.Softmax(dim=2)
     # rgb_sky = softmax_func(rgb_sky)
 
-    sky_mask = sky_mask.permute(2,0,1)
+    sky_mask = sky_mask.permute(2,0,1)# Zhenyi Wan [2025/4/17] [3, H//s, W//s]
     'the sky color should be considered to different color combination'
     # sky_color = torch.ones((3,), dtype=rgb_pred.type)
     # sky_color = torch.ones((3,))
     # sky_color = torch.tensor([203/255, 206/255, 211/255])
 
     rgb_pred = rgb_pred * sky_mask + rgb_sky * (1 - sky_mask)
+    if color_NeRO is not None:
+        color_NeRO = color_NeRO * sky_mask + rgb_sky * (1 - sky_mask)
+    if color_NeILF is not None:
+        color_NeILF = color_NeILF * sky_mask + rgb_sky * (1 - sky_mask)
+    if roughness_map is not None:
+        roughness_map = roughness_map * sky_mask + 1 * (1 - sky_mask) # Zhenyi Wan [2025/4/17] In roughness map the sky is treated as maximum roughness
+    if metallic_map is not None:
+        metallic_map = metallic_map * sky_mask + 0 * (1 - sky_mask)# Zhenyi Wan [2025/4/17] [1,H//s,W//s]The sky is treated as no metallic
+    if albedo_map is not None:
+        albedo_map = albedo_map * sky_mask + rgb_sky * (1 - sky_mask)  # Zhenyi Wan [2025/4/17] [3,H//s,W//s]
+    if normals_map is not None:
+        default_normal = torch.tensor([0.0, 0.0, 1.0], device=normals_map.device).view(3, 1, 1) # Zhenyi Wan [2025/4/18] Set the normals of the sky as default in z-direction
+        normals_map = normals_map * sky_mask + default_normal * (1 - sky_mask)  # Zhenyi Wan [2025/4/17] [3,H//s,W//s]
 
 
     h_max = max(rgb_gt.shape[-2], rgb_pred.shape[-2], average_im.shape[-2])
@@ -671,9 +753,26 @@ def log_view(
     # rgb_im[:, : average_im.shape[-2], : average_im.shape[-1]] = average_im
     # rgb_im[:, : rgb_gt.shape[-2], w_max : w_max + rgb_gt.shape[-1]] = rgb_gt
     # rgb_im[:, : rgb_pred.shape[-2], 2 * w_max : 2 * w_max + rgb_pred.shape[-1]] = rgb_pred
-    rgb_im = torch.zeros(3, h_max, 2 * w_max)
-    rgb_im[:, : rgb_gt.shape[-2], : rgb_gt.shape[-1]] = rgb_gt
-    rgb_im[:, : rgb_pred.shape[-2], w_max : w_max + rgb_pred.shape[-1]] = rgb_pred
+
+    rgb_im = torch.zeros(3, h_max, 2 * w_max) # Zhenyi Wan [2025/4/18] create a black background[3,H_max,2*max]
+    rgb_im[:, : rgb_gt.shape[-2], : rgb_gt.shape[-1]] = rgb_gt # Zhenyi Wan [2025/4/18] place the rgb_gt in the upper left corner of the background
+    rgb_im[:, : rgb_pred.shape[-2], w_max: w_max + rgb_pred.shape[-1]] = rgb_pred
+    if color_NeRO is not None:
+        color_NeRO_ = torch.zeros(3, h_max, w_max)
+        color_NeRO_[:, : color_NeRO.shape[-2], : color_NeRO.shape[-1]] = color_NeRO
+        rgb_im = torch.cat((rgb_im, color_NeRO_), dim=-1)
+    if color_NeILF is not None:
+        color_NeILF_ = torch.zeros(3, h_max, w_max)
+        color_NeILF_[:, : color_NeILF.shape[-2], : color_NeILF.shape[-1]] = color_NeILF
+        rgb_im = torch.cat((rgb_im, color_NeILF_), dim=-1)
+
+
+    if roughness_map is not None and metallic_map is not None and albedo_map is not None and normals_map is not None:
+        BRDF_im = torch.zeros(3, h_max, 4 * w_max)  # Zhenyi Wan [2025/4/18] create a black background[3,H_max,4*max]
+        BRDF_im[:, : roughness_map.shape[-2], : roughness_map.shape[-1]] = roughness_map.repeat(3, 1, 1)  # Zhenyi Wan [2025/4/18] The third fig is roughness_map after converting to 3-channel
+        BRDF_im[:, : metallic_map.shape[-2], w_max: w_max + metallic_map.shape[-1]] = metallic_map.repeat(3, 1, 1)  # Zhenyi Wan [2025/4/18] The fourth fig is metallic_map after converting to 3-channel
+        BRDF_im[:, : albedo_map.shape[-2], 2 * w_max: 2 * w_max + albedo_map.shape[-1]] = albedo_map  # Zhenyi Wan [2025/4/18] The fifth fig is albedo map
+        BRDF_im[:, : normals_map.shape[-2], 3 * w_max: 3 * w_max + normals_map.shape[-1]] = normals_map  # Zhenyi Wan [2025/4/18] The fifth fig is normals map
 
     depth_matrix = {}
 
@@ -731,11 +830,18 @@ def log_view(
         depth_pred = torch.cat((depth_pred, ret["outputs_fine"]["depth"].detach().cpu()), dim=-1)
         depth_im = img_HWC2CHW(colorize(depth_pred, cmap_name="jet"))
 
-    rgb_im = rgb_im.permute(1, 2, 0).detach().cpu().numpy()
+    rgb_im = rgb_im.permute(1, 2, 0).detach().cpu().numpy() # Zhenyi Wan [2025/4/19] (n*H, W, 3)
     rgb_im = np.array(Image.fromarray((rgb_im * 255).astype(np.uint8)))
     filename = os.path.join(out_folder, prefix[:-1] + "_{:03d}.png".format(global_step))
 
-    torchvision.io.write_png(torch.tensor(rgb_im).permute(2,0,1), filename)
+    torchvision.io.write_png(torch.tensor(rgb_im).permute(2, 0, 1), filename)
+
+    if BRDF_im is not None:
+        BRDF_im = BRDF_im.permute(1, 2, 0).detach().cpu().numpy()
+        BRDF_im = np.array(Image.fromarray((BRDF_im * 255).astype(np.uint8)))
+        filename = os.path.join(out_folder, prefix[:-1] + "BRDF_{:03d}.png".format(global_step))
+        torchvision.io.write_png(torch.tensor(BRDF_im).permute(2, 0, 1), filename)
+
     # imageio.imwrite(filename, rgb_im)
     if depth_im is not None:
         depth_im = depth_im.permute(1, 2, 0).detach().cpu().numpy()
@@ -768,7 +874,16 @@ def log_view(
         else ret["outputs_coarse"]["rgb"]
     )
     psnr_curr_img = img2psnr(pred_rgb.detach().cpu(), gt_img)
-    print(prefix + "psnr_image: ", psnr_curr_img)
+    print(prefix + "psnr_image_Original: ", psnr_curr_img)
+    if color_NeRO is not None:
+        psnr_NeRO_img = img2psnr(ret["color_NeRO"].detach().cpu(), gt_img)
+        print(prefix + "psnr_image_NeROPBR: ", psnr_NeRO_img)
+    if color_NeILF is not None:
+        psnr_NeILF_img = img2psnr(ret["color_NeILF"].detach().cpu(), gt_img)
+        print(prefix + "psnr_image_NeILFPBR: ", psnr_NeILF_img)
+
+
+
 
     'LinGaoyuan_operation_20240927: calculate psnr of depth image'
     depth_value_gt = ray_batch['depth_value'].reshape(H,W,1).squeeze().cpu()
