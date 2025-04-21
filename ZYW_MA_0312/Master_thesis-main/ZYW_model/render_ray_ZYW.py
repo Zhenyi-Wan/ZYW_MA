@@ -360,6 +360,8 @@ def render_rays(
                 if args.BRDF_model is True:
                     BRDF_Buffer = model.net_coarse.forward_BDRF(pts, ray_batch, rgb_feat, z_vals, mask, ray_d, ray_diff,
                                                                 ret_alpha=ret_alpha)
+                else:
+                    BRDF_Buffer = None
 
                 # rgb = model.net_coarse.forward_retr(pts, ray_batch, featmaps, z_vals, ret_alpha=ret_alpha)
             else:
@@ -375,6 +377,8 @@ def render_rays(
                 if args.BRDF_model is True:
                     BRDF_Buffer = model.net_coarse.forward_BDRF(pts, ray_batch, rgb_feat, z_vals, mask, ray_d, ray_diff,
                                                                 ret_alpha=ret_alpha)
+                else:
+                    BRDF_Buffer = None
                 # rgb = model.net_coarse.forward_retr(pts, ray_batch, featmaps, z_vals, fea_volume=feature_volume, ret_alpha=ret_alpha)
         else:
             'LinGaoyuan_20240930: retr model + model_and_model_component feature extractor'
@@ -394,6 +398,8 @@ def render_rays(
             if args.BRDF_model is True:
                 BRDF_Buffer = model.net_coarse.forward_BDRF(pts, ray_batch, rgb_feat, z_vals, mask, ray_d, ray_diff,
                                                             ret_alpha=ret_alpha)
+            else:
+                BRDF_Buffer = None
     else:
         'LinGaoyuan_20240930: model_and_model_component model + model_and_model_component feature extractor'
         # Zhenyi Wan [2025/4/8] GNT model
@@ -416,6 +422,11 @@ def render_rays(
             roughness, roughness_weights = BRDF_Buffer.roughness[:, 0:1], BRDF_Buffer.roughness[:, 1:]
             albedo, albedo_weights = BRDF_Buffer.albedo[:, 0:3], BRDF_Buffer.albedo[:, 3:]# Zhenyi Wan [2025/4/9] [N_rand, 3]; [N_rand, N_samples]
             normals, normals_weights = BRDF_Buffer.normals[:, 0:3], BRDF_Buffer.normals[:, 3:]
+
+            normals = torch.nn.functional.normalize(normals, dim=-1) # Zhenyi Wan [2025/4/22]
+            metallic = torch.sigmoid(metallic)
+            roughness = torch.sigmoid(roughness)
+            albedo = torch.sigmoid(albedo)
 
         'LinGaoyuan_operation_20240906: add cov of depth prediction based on Uncle SLAM formular 5'
         depth_pred = depth_map[..., None]
