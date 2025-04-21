@@ -66,8 +66,8 @@ class NeILFPBR(nn.Module):
         output_dirs = output_dirs.unsqueeze(dim=1)  # [N, 1, 3]
         normal_dirs = normals.unsqueeze(dim=1)  # [N, 1, 3]
         base_color = base_color.unsqueeze(dim=1)  # [N, 1, 3]
-        roughness = roughness.unsqueeze(dim=1)  # [N, 1, 1]
-        metallic = metallic.unsqueeze(dim=1)  # [N, 1, 1]
+        roughness = roughness.unsqueeze(dim=1).reshape(-1, 1)  # [N, 1, 1]
+        metallic = metallic.unsqueeze(dim=1).reshape(-1, 1)  # [N, 1, 1]
 
         def _dot(a, b):
             return (a * b).sum(dim=-1, keepdim=True)  # [N, 1, 1]
