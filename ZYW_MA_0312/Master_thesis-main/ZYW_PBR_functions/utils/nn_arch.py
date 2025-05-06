@@ -5,7 +5,7 @@
 import numpy as np
 import torch
 import torch.nn as nn
-from embedder import get_embedder
+from ZYW_PBR_functions.utils.embedder import get_embedder
 
 class SineLayer(nn.Module):
     ''' Siren layer '''

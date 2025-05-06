@@ -10,7 +10,7 @@ from math import sqrt
 import torch
 import torch.nn.functional as Func
 
-from utils import geometry
+from ZYW_PBR_functions.utils import geometry
 
 EPS = 1e-7
 

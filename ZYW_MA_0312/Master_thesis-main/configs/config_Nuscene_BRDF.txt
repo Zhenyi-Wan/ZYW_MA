@@ -20,13 +20,13 @@ eval_scenes = scene-0075
 ### IMAGE RESIZE
 image_H = 900
 image_W = 1600
-resize_image = False
+resize_image = True
 image_resize_H = 450
 image_resize_W = 800
 
 ### TRAINING
 num_source_views = 6
-N_rand = 3072
+N_rand = 2048
 lrate_feature = 0.001
 lrate_gnt = 0.0005
 lrate_decay_factor = 0.5

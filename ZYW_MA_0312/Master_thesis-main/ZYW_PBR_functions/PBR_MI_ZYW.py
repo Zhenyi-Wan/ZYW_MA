@@ -3,8 +3,8 @@ import torch.nn as nn
 import torch.nn.functional as Func
 import numpy as np
 
-from utils.ray_sampling import fibonacci_sphere_sampling
-from utils.nn_arch import NeILFMLP
+from ZYW_PBR_functions.utils.ray_sampling import fibonacci_sphere_sampling
+from ZYW_PBR_functions.utils.nn_arch import NeILFMLP
 
 EPS = 1e-7
 

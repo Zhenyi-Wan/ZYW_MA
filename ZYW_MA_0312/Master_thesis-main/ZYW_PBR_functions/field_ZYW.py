@@ -5,9 +5,9 @@ import numpy as np
 import nvdiffrast.torch as dr
 import mcubes
 
-from utils.base_utils import az_el_to_points, sample_sphere
-from utils.raw_utils import linear_to_srgb
-from utils.ref_utils import generate_ide_fn
+from ZYW_PBR_functions.utils.base_utils import az_el_to_points, sample_sphere
+from ZYW_PBR_functions.utils.raw_utils import linear_to_srgb
+from ZYW_PBR_functions.utils.ref_utils import generate_ide_fn
 
 # Positional encoding embedding. Code was taken from https://github.com/bmild/nerf.
 class Embedder:
