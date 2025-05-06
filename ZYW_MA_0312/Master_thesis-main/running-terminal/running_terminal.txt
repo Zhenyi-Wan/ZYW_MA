@@ -6,3 +6,6 @@ python3 train_LinGaoyuan.py --config configs/config_Nuscene.txt --train_scenes s
 
 20241004 test for val
 python3 eval_LinGaoyuan.py --config configs/config_NusceneR.txt
+
+20250506 test for BRDF model
+python3 train_ZYW.py --config configs/config_Nuscene_BRDF.txt --train_scenes scene-0075 --eval_scenes scene-0075

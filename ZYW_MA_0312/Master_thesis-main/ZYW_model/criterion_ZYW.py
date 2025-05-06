@@ -49,7 +49,7 @@ class Criterion(nn.Module):
 
         # Zhenyi Wan [2025/4/15] NeRO Method: Which use LUT based slit-sum approximation to calculate the color. Different is, NeRO calculate
         #each sampled points along the rays. We already get the surface points, so only calculate each surface points.
-        color_NeRO, occ_info = self.NeRO_PBR(points, pred_roughness, pred_metallic, pred_albedo, pred_normals, ray_d)
+        color_NeRO, _ = self.NeRO_PBR(points, pred_roughness, pred_metallic, pred_albedo, pred_normals, ray_d)
 
         if "mask" in outputs:
             pred_mask = outputs["mask"].float()

@@ -340,7 +340,7 @@ def render_rays(
     elif contraction_type == 'zhengzhisheng':
         pts = contract_to_unisphere_LinGaoyuan(pts)
     elif contraction_type == 'xuyan':
-        pts = contract_to_unisphere_LinGaoyuan_xuyan(pts)
+        pts = contract_to_unisphere_LinGaoyuan_xuyan(pts) # Zhenyi Wan [2025/5/4] [N_rays, N_samples, 3]
 
     N_rays, N_samples = pts.shape[:2]
 

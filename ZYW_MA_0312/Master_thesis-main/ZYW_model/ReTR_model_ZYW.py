@@ -270,10 +270,15 @@ class ZYW_ReTR_model(nn.Module):
                                 N_rand=N_rand, N_samples=N_samples)
             return feature
 
+        #BRDF_features = {
+        #    name: process_brdf_attribute(getattr(self, f'{name}_transformer'), input_view)
+        #    for name in ['metallic', 'roughness', 'albedo', 'normals']
+        #}
+
         BRDF_features = {
-            name: process_brdf_attribute(getattr(self, f'{name}_transformer'), input_view)
-            for name in ['metallic', 'roughness', 'albedo', 'normals']
-        }
+             name: process_brdf_attribute(self.brdf_transformers[name], input_view)
+             for name in ['metallic', 'roughness', 'albedo', 'normals']
+       }
 
         # Zhenyi Wan [2025/3/14] BRDF Features Encoder:Use four transformers as encoder for metallic, roughness, albedo and normals. The inputs are all the same,
         # sampled scr image features.
@@ -371,7 +376,7 @@ class ZYW_ReTR_model(nn.Module):
         #normals_occ = self.normals_occu_transformer(normalsocc_input, mask0 = attn_mask)
 
         brdf_occ_results = {
-            name: getattr(self, f'{name}_occu_transformer')(BRDFocc_inputs[name], mask0=attn_mask)
+            name: self.brdf_occ_transformers[name](BRDFocc_inputs[name], mask0=attn_mask)
             for name in ['metallic', 'roughness', 'albedo', 'normals']
         }
 
@@ -382,7 +387,7 @@ class ZYW_ReTR_model(nn.Module):
         #output_normals = self.normals_decoder(normals_occ[:, :1], normals_occ[:, 1:])
 
         brdf_outputs = {
-            name: getattr(self, f'{name}_decoder')(
+            name: self.brdf_decoders[name](
                 brdf_occ_results[name][:, :1],
                 brdf_occ_results[name][:, 1:]
             )
@@ -396,7 +401,7 @@ class ZYW_ReTR_model(nn.Module):
         #normals_weight = self.normals_decoder.atten_weight.squeeze()
 
         brdf_weights = {
-            name: getattr(self, f'{name}_decoder').atten_weight.squeeze()
+            name: self.brdf_decoders[name].atten_weight.squeeze()
             for name in ['metallic', 'roughness', 'albedo', 'normals']
         }
 
