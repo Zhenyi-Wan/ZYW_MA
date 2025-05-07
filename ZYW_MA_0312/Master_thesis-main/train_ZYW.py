@@ -324,7 +324,7 @@ def train(args):
             loss_NeILF = None
             if args.use_NeROPBR is True:
                 # NeRO loss
-                loss_NeRO, scalars_to_log = criterion.NeRO_loss(ret["color_NERO"], ray_batch, scalars_to_log)
+                loss_NeRO, scalars_to_log = criterion.NeRO_loss(ret["color_NeRO"], ray_batch, scalars_to_log)
             if args.use_NeILFPBR is True:
                 # NeILF loss
                 loss_NeILF, scalars_to_log = criterion.NeILF_loss(ret["color_NeILF"], ray_batch, scalars_to_log)
