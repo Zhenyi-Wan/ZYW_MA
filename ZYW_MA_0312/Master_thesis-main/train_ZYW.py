@@ -324,14 +324,10 @@ def train(args):
             loss_NeILF = None
             if args.use_NeROPBR is True:
                 # NeRO loss
-                loss_NeRO, scalars_to_log = criterion.NeRO_loss(ret["outputs_coarse"], ret["outputs_roughness"],
-                                                                ret["outputs_metallic"], ret["outputs_albedo"],
-                                                                ret["outputs_normals"], ray_batch, scalars_to_log)
+                loss_NeRO, scalars_to_log = criterion.NeRO_loss(ret["color_NERO"], ray_batch, scalars_to_log)
             if args.use_NeILFPBR is True:
                 # NeILF loss
-                loss_NeILF, scalars_to_log = criterion.NeILF_loss(ret["outputs_coarse"], ret["outputs_roughness"],
-                                                                  ret["outputs_metallic"], ret["outputs_albedo"],
-                                                                  ret["outputs_normals"], ray_batch, scalars_to_log)
+                loss_NeILF, scalars_to_log = criterion.NeILF_loss(ret["color_NeILF"], ray_batch, scalars_to_log)
 
             'loss of sky area, add by LinGaoyuan'
             loss_sky_rgb = criterion.sky_loss_rgb(ret["outputs_coarse"], ray_batch)

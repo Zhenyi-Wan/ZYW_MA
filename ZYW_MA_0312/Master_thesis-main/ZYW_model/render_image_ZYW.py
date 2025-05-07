@@ -109,7 +109,7 @@ def render_single_image(
                 if ret["outputs_coarse"][k] is not None:
                     all_ret["outputs_coarse"][k] = []
 
-            for key in ["outputs_roughness", "outputs_metallic", "outputs_albedo", "outputs_normals", "outputs_fine"]:
+            for key in ["outputs_roughness", "outputs_metallic", "outputs_albedo", "outputs_normals", "outputs_fine", "color_NERO", "color_NeILF"]:
                 if key in ret:
                     if ret[key] is None:
                         all_ret[key] = None
@@ -150,41 +150,16 @@ def render_single_image(
                 if ret["outputs_fine"][k] is not None:
                     all_ret["outputs_fine"][k].append(ret["outputs_fine"][k].cpu())
 
-        ray_d_chunk = chunk["ray_d"]
-        if ray_d_chunk is not None:
-            all_ret["ray_d"].append(ray_d_chunk.cpu())
+        if ret["color_NeRO"] is not None:
+            for k in ret["color_NeRO"]:
+                if ret["color_NeRO"][k] is not None:
+                    all_ret["color_NeRO"].append(ret["color_NeRO"][k].cpu())
 
+        if ret["color_NeILF"] is not None:
+            for k in ret["color_NeILF"]:
+                if ret["color_NeILF"][k] is not None:
+                    all_ret["color_NeILF"].append(ret["color_NeILF"][k].cpu())
 
-        points = torch.cat(all_ret["outputs_coarse"]["points"], dim=0)
-        ray_d = torch.cat(all_ret["ray_d"], dim=0)
-        view_d = -ray_d
-
-        if all_ret["outputs_albedo"] is not None and all_ret["outputs_normals"] is not None and all_ret["outputs_roughness"] is not None and all_ret["outputs_metallic"] is not None:
-            device = torch.device("cuda" if torch.cuda.is_available() else "cpu")  # Use GPU if available
-            print("Checking devices and shapes before moving to GPU:")
-            print(f"all_ret['outputs_roughness']['roughness'] device: {[t.device for t in all_ret['outputs_roughness']['roughness']]}")
-            print(f"all_ret['outputs_metallic']['metallic'] device: {[t.device for t in all_ret['outputs_metallic']['metallic']]}")
-            print(f"all_ret['outputs_albedo']['albedo'] device: {[t.device for t in all_ret['outputs_albedo']['albedo']]}")
-            print(f"all_ret['outputs_normals']['normals'] device: {[t.device for t in all_ret['outputs_normals']['normals']]}")
-            print(f"all_ret['ray_d'] device: {[t.device for t in all_ret['ray_d']]}")
-            print(f"points device: {points.device}")
-            pred_roughness = torch.cat(all_ret["outputs_roughness"]["roughness"], dim=0).to(device)
-            pred_metallic = torch.cat(all_ret["outputs_metallic"]["metallic"], dim=0).to(device)
-            pred_albedo = torch.cat(all_ret["outputs_albedo"]["albedo"], dim=0).to(device)
-            pred_normals = torch.cat(all_ret["outputs_normals"]["normals"], dim=0).to(device)
-            ray_d = torch.cat(all_ret["ray_d"], dim=0).to(device)
-            print("Checking devices and shapes before moving to GPU:")
-            print(f"all_ret['outputs_roughness']['roughness'] device: {[t.device for t in all_ret['outputs_roughness']['roughness']]}")
-            print(f"all_ret['outputs_metallic']['metallic'] device: {[t.device for t in all_ret['outputs_metallic']['metallic']]}")
-            print(f"all_ret['outputs_albedo']['albedo'] device: {[t.device for t in all_ret['outputs_albedo']['albedo']]}")
-            print(f"all_ret['outputs_normals']['normals'] device: {[t.device for t in all_ret['outputs_normals']['normals']]}")
-            print(f"all_ret['ray_d'] device: {[t.device for t in all_ret['ray_d']]}")
-            print(f"points device: {points.device}")
-
-            if args.use_NeROPBR is True:
-                color_NeRO, _ = NeRO_PBR(points, pred_roughness, pred_metallic, pred_albedo, pred_normals, ray_d)
-            if args.use_NeILFPBR is True:
-                color_NeILF = NeILF_PBR(points, pred_roughness, pred_metallic, pred_albedo, pred_normals, view_d)
 
     rgb_strided = torch.ones(ray_sampler.H, ray_sampler.W, 3)[::render_stride, ::render_stride, :] # Zhenyi Wan [2025/4/17] [H//3,W//s,3]
     # Zhenyi Wan [2025/4/17] add material stride, the channel is 1 for roughness and metallic
@@ -232,14 +207,21 @@ def render_single_image(
             )
             all_ret["outputs_normals"][k] = tmp
 
-    if color_NeRO is not None:
-        tmp = color_NeRO.reshape((rgb_strided.shape[0], rgb_strided.shape[1], -1))
-        all_ret["color_NeRO"] = tmp
+    if ret["color_NeRO"] is not None:
+        for k in all_ret["color_NeRO"]:
+            tmp = torch.cat(all_ret["color_NeRO"][k], dim=0).reshape(
+                (rgb_strided.shape[0], rgb_strided.shape[1], -1)
+            )
+            all_ret["color_NeRO"][k] = tmp
 
-    if color_NeILF is not None:
-        tmp = color_NeILF.reshape((rgb_strided.shape[0], rgb_strided.shape[1], -1))
-        all_ret["color_NeILF"] = tmp
+    if ret["color_NeILF"] is not None:
+        for k in all_ret["color_NeILF"]:
+            tmp = torch.cat(all_ret["color_NeILF"][k], dim=0).reshape(
+                (rgb_strided.shape[0], rgb_strided.shape[1], -1)
+            )
+            all_ret["color_NeILF"][k] = tmp
 
+            
     # TODO: if invalid: replace with white
     # all_ret["outputs_coarse"]["rgb"][all_ret["outputs_coarse"]["mask"] == 0] = 1.0
     if all_ret["outputs_fine"] is not None:

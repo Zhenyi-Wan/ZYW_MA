@@ -3,6 +3,9 @@ from collections import OrderedDict
 from LinGaoyuan_function.unbounded2bounded import (SceneContraction, contract_to_unisphere_LinGaoyuan,
                                                    contract_to_unisphere_LinGaoyuan_xuyan)
 from model_and_model_component.ReTR_model_LinGaoyuan import LinGaoyuan_ReTR_model
+
+from ZYW_PBR_functions.field_ZYW import AppShadingNetwork
+from ZYW_PBR_functions.PBR_MI_ZYW import NeILFPBR
 # import imaginaire.model_utils.gancraft.voxlib as voxlib
 
 ########################################################################################################################
@@ -284,6 +287,10 @@ def render_rays(
     :param single_net: if True, will use single network, can be cued with both coarse and fine points
     :return: {'outputs_coarse': {}, 'outputs_fine': {}}
     """
+    # Initialize shader networks (equivalent to Criterion's initialization)
+    shader_config = {}  # Default shader configuration
+    NeRO_PBR = AppShadingNetwork(shader_config)
+    NeILF_PBR = NeILFPBR()
 
     ret = {"outputs_coarse": None, "outputs_fine": None}
     ray_o, ray_d = ray_batch["ray_o"], ray_batch["ray_d"]
@@ -458,6 +465,21 @@ def render_rays(
     rgb_sky, sky_style_code = sky_model(ray_d, sky_style_code.cuda(), sky_mask)
 
     z = sky_style_code.detach()
+
+    ret["color_NeRO"] = None
+    ret["color_NeILF"] = None
+    if args.use_NeROPBR is True:
+        # Zhenyi Wan [2025/5/8] NeRO PBR, which uses traditional BRDF render method.
+        color_NeRO, _ = NeRO_PBR(PBR_pts, roughness, metallic, albedo, normals, ray_d)
+        ret["color_NeRO"] = {"color_NeRO":color_NeRO}
+
+    if args.use_NeILFPBR is True:
+        view_d = -ray_d # Zhenyi Wan [2025/4/15] View direction is the opposite to ray_d
+        # Zhenyi Wan [2025/54/8] NeILF PBR, which uses traditional BRDF render method.
+        color_NeILF, _ = NeILF_PBR(PBR_pts, roughness, metallic, albedo, normals, view_d)
+        ret["color_NeILF"] = {"color_NeILF":color_NeILF}
+
+
 
     # sky_style_code = sky_style_model(sky_style_code.cuda())
     #

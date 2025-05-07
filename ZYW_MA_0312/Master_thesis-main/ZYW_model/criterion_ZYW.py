@@ -2,22 +2,11 @@ import torch.nn as nn
 from utils import img2mse
 import torch
 
-from ZYW_PBR_functions.field_ZYW import AppShadingNetwork
-from ZYW_PBR_functions.PBR_MI_ZYW import NeILFPBR
-
 
 class Criterion(nn.Module):
-    default_cfg = {
-        # shader network for NeRO method
-        'shader_config': {},
-    }
 
     def __init__(self):
         super().__init__()
-        self.cfg = {**self.default_cfg}
-        self.NeRO_PBR = AppShadingNetwork(self.cfg['shader_config'])
-        self.NeILF_PBR = NeILFPBR()
-
 
     def forward(self, outputs, ray_batch, scalars_to_log):
         """
@@ -35,22 +24,11 @@ class Criterion(nn.Module):
 
         return loss, scalars_to_log
 
-    def NeRO_loss(self, outputs, roughness_outputs, metallic_outputs, albedo_outputs, normals_outputs, ray_batch, scalars_to_log):
+    def NeRO_loss(self, outputs, ray_batch, scalars_to_log):
         """
         BRDF criterion
         """
-        # Zhenyi Wan [2025/4/10] First extract the BRDF values and use PBR method to rerender the RGB and calculate the MSE with ground truth
-        pred_roughness = roughness_outputs["roughness"]
-        pred_metallic = metallic_outputs["metallic"]
-        pred_albedo = albedo_outputs["albedo"]
-        pred_normals = normals_outputs["normals"]
-        points = outputs["points"]
-        ray_d = ray_batch["ray_d"]
-
-        # Zhenyi Wan [2025/4/15] NeRO Method: Which use LUT based slit-sum approximation to calculate the color. Different is, NeRO calculate
-        #each sampled points along the rays. We already get the surface points, so only calculate each surface points.
-        color_NeRO, _ = self.NeRO_PBR(points, pred_roughness, pred_metallic, pred_albedo, pred_normals, ray_d)
-
+        color_NeRO = outputs["color_NeRO"]
         if "mask" in outputs:
             pred_mask = outputs["mask"].float()
         else:
@@ -63,18 +41,8 @@ class Criterion(nn.Module):
 
 
 
-    def NeILF_loss(self, outputs, roughness_outputs, metallic_outputs, albedo_outputs, normals_outputs, ray_batch, scalars_to_log):
-        pred_roughness = roughness_outputs["roughness"]
-        pred_metallic = metallic_outputs["metallic"]
-        pred_albedo = albedo_outputs["albedo"]
-        pred_normals = normals_outputs["normals"]
-        points = outputs["points"]
-        ray_d = ray_batch["ray_d"]
-        view_d = -ray_d # Zhenyi Wan [2025/4/15] View direction is the opposite to ray_d
-
-        # Zhenyi Wan [2025/4/15] NeILF PBR, which uses traditional BRDF render method.
-        color_NeILF = self.NeILF_PBR(points, pred_roughness, pred_metallic, pred_albedo, pred_normals, view_d)
-
+    def NeILF_loss(self, outputs, ray_batch, scalars_to_log):
+        color_NeILF = outputs["color_NeILF"]
         if "mask" in outputs:
             pred_mask = outputs["mask"].float()
         else:
