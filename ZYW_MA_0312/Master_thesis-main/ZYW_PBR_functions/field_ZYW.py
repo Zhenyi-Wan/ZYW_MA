@@ -94,6 +94,17 @@ def make_predictor(feats_dim: object, output_dim: object, weight_norm: object = 
 
     return module
 
+class IdentityActivation(nn.Module):
+    def forward(self, x): return x
+
+class ExpActivation(nn.Module):
+    def __init__(self, max_light=5.0):
+        super().__init__()
+        self.max_light=max_light
+
+    def forward(self, x):
+        return torch.exp(torch.clamp(x, max=self.max_light))
+
 def get_camera_plane_intersection(pts, dirs, poses):
     #计算射线与相机 XoY 平面的交点
     """
@@ -253,7 +264,7 @@ class AppShadingNetwork(nn.Module):
         self.cfg={**self.default_cfg, **cfg}
         feats_dim = 256
 
-        FG_LUT = torch.from_numpy(np.fromfile('assets/bsdf_256_256.bin', dtype=np.float32).reshape(1, 256, 256, 2))
+        FG_LUT = torch.from_numpy(np.fromfile('ZYW_PBR_functions/assets/bsdf_256_256.bin', dtype=np.float32).reshape(1, 256, 256, 2))
         self.register_buffer('FG_LUT', FG_LUT)#缓冲区
 
         self.sph_enc = generate_ide_fn(5)#使用5阶的球面谐波
@@ -299,6 +310,10 @@ class AppShadingNetwork(nn.Module):
         return human_lights, human_weights
 
     def predict_specular_lights(self, points, reflective, roughness, human_poses, step):
+        device = points.device  # Ensure all tensors and modules are on the same device
+        self.inner_light.to(device)
+        self.outer_light.to(device)
+        self.inner_weight.to(device)
         human_light, human_weight = 0, 0
         ref_roughness = self.sph_enc(reflective, roughness) # Zhenyi Wan [2025/4/10] [N_rays, 72]
         pts = self.pos_enc(points) # Zhenyi Wan [2025/4/10] [N_rays, 27]
@@ -328,14 +343,17 @@ class AppShadingNetwork(nn.Module):
         return light, occ_prob, indirect_light, human_light * human_weight
 
     def predict_diffuse_lights(self, points, normals):
-        roughness = torch.ones([normals.shape[0],1]) # Zhenyi Wan [2025/4/10] [N_rays,1], for diffuse light, all the roughness is set to 1
+        device = normals.device  # Ensure all tensors are on the same device
+        roughness = torch.ones([normals.shape[0],1], device=device) # Zhenyi Wan [2025/4/10] [N_rays,1], for diffuse light, all the roughness is set to 1
         ref = self.sph_enc(normals, roughness) # Zhenyi Wan [2025/4/10] [N_rays, 72]
         if self.cfg['sphere_direction']: # Zhenyi Wan [2025/4/10] default cfg in this class, false as default
-            sph_points = offset_points_to_sphere(points) # Zhenyi Wan [2025/4/10] [N_rays,3]
+            sph_points = offset_points_to_sphere(points).to(device) # Zhenyi Wan [2025/4/10] [N_rays,3]
             sph_points = F.normalize(sph_points + normals * get_sphere_intersection(sph_points, normals), dim=-1) # Zhenyi Wan [2025/4/10] [N_rays, 3]
             sph_points = self.sph_enc(sph_points, roughness) # Zhenyi Wan [2025/4/10] [N_rays, 72]
             light = self.outer_light(torch.cat([ref, sph_points], -1)) # Zhenyi Wan [2025/4/10] [N_rays, 3]
         else:
+            device = ref.device  # Get the device of the input tensor `ref`
+            self.outer_light.to(device)  # Move the `outer_light` module to the same device as `ref`
             light = self.outer_light(ref) # Zhenyi Wan [2025/4/10] [N_rays, 3]
         return light
 
@@ -365,6 +383,12 @@ class AppShadingNetwork(nn.Module):
 
         fg_uv = torch.cat([torch.clamp(NoV, min=0.0, max=1.0), torch.clamp(roughness,min=0.0,max=1.0)],-1) # Zhenyi Wan [2025/4/10] [N_rays,2]
         pn, bn = points.shape[0], 1 # Zhenyi Wan [2025/4/10] N_rays,1
+
+        # Ensure FG_LUT is on the same device as other tensors
+        device = points.device
+        self.FG_LUT = self.FG_LUT.to(device)
+        fg_uv = fg_uv.to(device)  # Ensure fg_uv is on the same device
+
         fg_lookup = dr.texture(self.FG_LUT, fg_uv.reshape(1, pn//bn, bn, -1).contiguous(), filter_mode='linear', boundary_mode='clamp').reshape(pn, 2)# Zhenyi Wan [2025/4/10] [N_rays,2]
         specular_ref = (specular_albedo * fg_lookup[:,0:1] + fg_lookup[:,1:2]) # Zhenyi Wan [2025/4/10] [N_rays,1]
         specular_color = specular_ref * specular_light # Zhenyi Wan [2025/4/10] [N_rays,3]

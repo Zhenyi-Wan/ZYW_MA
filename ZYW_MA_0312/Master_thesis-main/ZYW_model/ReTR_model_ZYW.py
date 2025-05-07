@@ -37,11 +37,11 @@ class ZYW_ReTR_model(nn.Module):
         #                                                  attention='linear')
         #self.normals_transformer = LocalFeatureTransformer(d_model=self.in_feat_ch, nhead=8, layer_names=['self'],
         #                                                   attention='linear')
-        brdf_attributes = ['metallic', 'roughness', 'albedo', 'normals']
+        self.brdf_attributes = ['metallic', 'roughness', 'albedo', 'normals']
         self.brdf_transformers = nn.ModuleDict({
             name: LocalFeatureTransformer(d_model=self.in_feat_ch, nhead=8,
                                           layer_names=['self'], attention='linear')
-            for name in brdf_attributes
+            for name in self.brdf_attributes
         })
 
         if self.use_volume_feature and self.args.use_retr_feature_extractor:
@@ -56,7 +56,7 @@ class ZYW_ReTR_model(nn.Module):
                     layer_names=['self'],
                     attention='full'
                 )
-                for name in brdf_attributes
+                for name in self.brdf_attributes
             })
 
             self.ray_transformer = LocalFeatureTransformer(d_model=self.in_feat_ch * 2 + self.PE_d_hid, nhead=1,
@@ -118,12 +118,12 @@ class ZYW_ReTR_model(nn.Module):
             # Zhenyi Wan [2025/3/12] every new view transformer needs a specific occlusion transformer
             self.brdf_occ_transformers = nn.ModuleDict({
                 name: LocalFeatureTransformer(
-                    d_model=self.in_feat_ch * 2 + self.PE_d_hid,
+                    d_model=self.in_feat_ch + self.PE_d_hid,
                     nhead=8,
                     layer_names=['self'],
                     attention='full'
                 )
-                for name in brdf_attributes
+                for name in self.brdf_attributes
             })
 
             self.ray_transformer = LocalFeatureTransformer(d_model=self.in_feat_ch + self.PE_d_hid, nhead=1, layer_names=['cross'],
@@ -133,7 +133,7 @@ class ZYW_ReTR_model(nn.Module):
             # Inorder to better understand, rename the ray transformer as decoder(we do not output radiance)
             self.brdf_decoders = nn.ModuleDict({
                 name: LocalFeatureTransformer(
-                    d_model=self.in_feat_ch * 2 + self.PE_d_hid,
+                    d_model=self.in_feat_ch + self.PE_d_hid,
                     nhead=1,
                     layer_names=['cross'],
                     attention='full'
@@ -262,7 +262,7 @@ class ZYW_ReTR_model(nn.Module):
         input_view = img_feat_sampled  # LinGaoyuan_20240916: (N_rand, N_samples, n_views, 32)
         input_view = rearrange(input_view, 'N_rand N_samples n_views C -> (N_rand N_samples) n_views C')
 
-        def process_brdf_attribute(transformer, input_view, name):
+        def process_brdf_attribute(transformer, input_view):
             # Transformer
             feature = transformer(input_view)
             # Rearrange
@@ -277,7 +277,7 @@ class ZYW_ReTR_model(nn.Module):
 
         BRDF_features = {
              name: process_brdf_attribute(self.brdf_transformers[name], input_view)
-             for name in ['metallic', 'roughness', 'albedo', 'normals']
+             for name in self.brdf_attributes
        }
 
         # Zhenyi Wan [2025/3/14] BRDF Features Encoder:Use four transformers as encoder for metallic, roughness, albedo and normals. The inputs are all the same,
@@ -329,12 +329,15 @@ class ZYW_ReTR_model(nn.Module):
         #    BRDF_radiance = rearrange(BRDF_radiance, "DimRGB N_rand N_samples -> N_rand N_samples DimRGB")
         #    BRDF_radiances.append(BRDF_radiance)
         #[metallic_radiance, roughness_radiance, albedo_radiance, normals_radiance] = BRDF_radiances
-
+        source_imgs_feat = rearrange(source_imgs_feat, "N_rand N_samples n_views C -> n_views C N_rand N_samples")
+        
+        
         def calculate_brdf_radiance(weight):
             radiance = (source_imgs_feat * rearrange(weight,
-                                                     "N_rand N_samples n_views 1 -> n_views 1 N_rand N_samples",
+                                                     "N_rand N_samples n_views C -> n_views C N_rand N_samples",
                                                      N_rand=N_rand, N_samples=N_samples)).sum(axis=0)
             return rearrange(radiance, "DimRGB N_rand N_samples -> N_rand N_samples DimRGB")
+            
 
         BRDF_radiances = {
             name: calculate_brdf_radiance(weight)
@@ -377,7 +380,7 @@ class ZYW_ReTR_model(nn.Module):
 
         brdf_occ_results = {
             name: self.brdf_occ_transformers[name](BRDFocc_inputs[name], mask0=attn_mask)
-            for name in ['metallic', 'roughness', 'albedo', 'normals']
+            for name in self.brdf_attributes
         }
 
         # Zhenyi Wan [2025/3/20] BRDF Decoder
@@ -391,7 +394,7 @@ class ZYW_ReTR_model(nn.Module):
                 brdf_occ_results[name][:, :1],
                 brdf_occ_results[name][:, 1:]
             )
-            for name in ['metallic', 'roughness', 'albedo', 'normals']
+            for name in self.brdf_attributes
         }
 
         # Zhenyi Wan [2025/3/20] BRDF weights
@@ -402,7 +405,7 @@ class ZYW_ReTR_model(nn.Module):
 
         brdf_weights = {
             name: self.brdf_decoders[name].atten_weight.squeeze()
-            for name in ['metallic', 'roughness', 'albedo', 'normals']
+            for name in self.brdf_attributes
         }
 
         # Zhenyi Wan [2025/3/20] BRDF-Buffer
@@ -414,17 +417,14 @@ class ZYW_ReTR_model(nn.Module):
         def process_brdf_output(name, output):
             mlp = self.MaterialMLP if name in ['metallic', 'roughness'] else self.RadianceMLP
             tensor = torch.sigmoid(mlp(output))
-            if len(tensor.shape) == 3:
-                tensor = tensor.squeeze()
-            elif len(tensor.shape) == 1 and name in ['metallic', 'roughness']:
-                tensor = tensor.squeeze(1)
+            tensor = tensor.squeeze(1)
             if ret_alpha:
                 tensor = torch.cat([tensor, brdf_weights[name]], dim=1)
             return tensor
 
         BRDF_buffer = {
             name: process_brdf_output(name, brdf_outputs[name])
-            for name in ['metallic', 'roughness', 'albedo', 'normals']
+            for name in self.brdf_attributes
         }
 
 

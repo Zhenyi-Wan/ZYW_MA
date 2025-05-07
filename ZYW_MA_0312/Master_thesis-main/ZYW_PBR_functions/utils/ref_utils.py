@@ -109,6 +109,9 @@ def generate_ide_fn(deg_view):
         # Apply attenuation function using the von Mises-Fisher distribution
         # concentration parameter, kappa.
         sigma = 0.5 * ml_array[1, :] * (ml_array[1, :] + 1) # Zhenyi Wan [2025/4/10] [36]
+        device = sph_harms.device  # Get the device of sph_harms
+        sigma = sigma.to(device)
+        kappa_inv = kappa_inv.to(device)
         ide = sph_harms * torch.exp(-sigma * kappa_inv) # Zhenyi Wan [2025/4/10] [...,36]
 
         # Split into real and imaginary parts and return

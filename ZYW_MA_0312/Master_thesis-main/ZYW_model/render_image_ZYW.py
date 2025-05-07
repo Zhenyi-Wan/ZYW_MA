@@ -109,40 +109,17 @@ def render_single_image(
                 if ret["outputs_coarse"][k] is not None:
                     all_ret["outputs_coarse"][k] = []
 
-            if ret["outputs_roughness"] is None:
-                all_ret["outputs_roughness"] = None
-            else:
-                for k in ret["outputs_roughness"]:
-                    if ret["outputs_roughness"][k] is not None:
-                        all_ret["outputs_roughness"][k] = []
+            for key in ["outputs_roughness", "outputs_metallic", "outputs_albedo", "outputs_normals", "outputs_fine"]:
+                if key in ret:
+                    if ret[key] is None:
+                        all_ret[key] = None
+                    else:
+                        all_ret[key] = {}
+                        for k in ret[key]:
+                            if ret[key][k] is not None:
+                                all_ret[key][k] = []
 
-            if ret["outputs_metallic"] is None:
-                all_ret["outputs_metallic"] = None
-            else:
-                for k in ret["outputs_metallic"]:
-                    if ret["outputs_metallic"][k] is not None:
-                        all_ret["outputs_metallic"][k] = []
-
-            if ret["outputs_albedo"] is None:
-                all_ret["outputs_albedo"] = None
-            else:
-                for k in ret["outputs_albedo"]:
-                    if ret["outputs_albedo"][k] is not None:
-                        all_ret["outputs_albedo"][k] = []
-
-            if ret["outputs_normals"] is None:
-                all_ret["outputs_normals"] = None
-            else:
-                for k in ret["outputs_normals"]:
-                    if ret["outputs_normals"][k] is not None:
-                        all_ret["outputs_normals"][k] = []
-
-            if ret["outputs_fine"] is None:
-                all_ret["outputs_fine"] = None
-            else:
-                for k in ret["outputs_fine"]:
-                    if ret["outputs_fine"][k] is not None:
-                        all_ret["outputs_fine"][k] = []
+            all_ret["ray_d"] = []
 
         for k in ret["outputs_coarse"]:
             if ret["outputs_coarse"][k] is not None:
@@ -173,15 +150,37 @@ def render_single_image(
                 if ret["outputs_fine"][k] is not None:
                     all_ret["outputs_fine"][k].append(ret["outputs_fine"][k].cpu())
 
+        ray_d_chunk = chunk["ray_d"]
+        if ray_d_chunk is not None:
+            all_ret["ray_d"].append(ray_d_chunk.cpu())
+
+
         points = torch.cat(all_ret["outputs_coarse"]["points"], dim=0)
-        ray_d = ray_batch["ray_d"]
+        ray_d = torch.cat(all_ret["ray_d"], dim=0)
         view_d = -ray_d
 
         if all_ret["outputs_albedo"] is not None and all_ret["outputs_normals"] is not None and all_ret["outputs_roughness"] is not None and all_ret["outputs_metallic"] is not None:
-            pred_roughness = torch.cat(all_ret["outputs_roughness"]["roughness"], dim=0)
-            pred_metallic = torch.cat(all_ret["outputs_metallic"]["metallic"], dim=0)
-            pred_albedo = torch.cat(all_ret["outputs_albedo"]["albedo"], dim=0)
-            pred_normals = torch.cat(all_ret["outputs_normals"]["normals"], dim=0)
+            device = torch.device("cuda" if torch.cuda.is_available() else "cpu")  # Use GPU if available
+            print("Checking devices and shapes before moving to GPU:")
+            print(f"all_ret['outputs_roughness']['roughness'] device: {[t.device for t in all_ret['outputs_roughness']['roughness']]}")
+            print(f"all_ret['outputs_metallic']['metallic'] device: {[t.device for t in all_ret['outputs_metallic']['metallic']]}")
+            print(f"all_ret['outputs_albedo']['albedo'] device: {[t.device for t in all_ret['outputs_albedo']['albedo']]}")
+            print(f"all_ret['outputs_normals']['normals'] device: {[t.device for t in all_ret['outputs_normals']['normals']]}")
+            print(f"all_ret['ray_d'] device: {[t.device for t in all_ret['ray_d']]}")
+            print(f"points device: {points.device}")
+            pred_roughness = torch.cat(all_ret["outputs_roughness"]["roughness"], dim=0).to(device)
+            pred_metallic = torch.cat(all_ret["outputs_metallic"]["metallic"], dim=0).to(device)
+            pred_albedo = torch.cat(all_ret["outputs_albedo"]["albedo"], dim=0).to(device)
+            pred_normals = torch.cat(all_ret["outputs_normals"]["normals"], dim=0).to(device)
+            ray_d = torch.cat(all_ret["ray_d"], dim=0).to(device)
+            print("Checking devices and shapes before moving to GPU:")
+            print(f"all_ret['outputs_roughness']['roughness'] device: {[t.device for t in all_ret['outputs_roughness']['roughness']]}")
+            print(f"all_ret['outputs_metallic']['metallic'] device: {[t.device for t in all_ret['outputs_metallic']['metallic']]}")
+            print(f"all_ret['outputs_albedo']['albedo'] device: {[t.device for t in all_ret['outputs_albedo']['albedo']]}")
+            print(f"all_ret['outputs_normals']['normals'] device: {[t.device for t in all_ret['outputs_normals']['normals']]}")
+            print(f"all_ret['ray_d'] device: {[t.device for t in all_ret['ray_d']]}")
+            print(f"points device: {points.device}")
+
             if args.use_NeROPBR is True:
                 color_NeRO, _ = NeRO_PBR(points, pred_roughness, pred_metallic, pred_albedo, pred_normals, ray_d)
             if args.use_NeILFPBR is True:

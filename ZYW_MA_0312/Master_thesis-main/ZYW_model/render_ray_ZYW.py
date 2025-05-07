@@ -415,13 +415,13 @@ def render_rays(
     if ret_alpha:
         rgb, weights = rgb[:, 0:3], rgb[:, 3:]
         depth_map = torch.sum(weights * z_vals, dim=-1)# Zhenyi Wan [2025/4/9](N_rand,)
-        PBR_pts = depth_map * ray_d + ray_o # Zhenyi Wan [2025/4/10] (N_rand,3)
+        PBR_pts = depth_map.unsqueeze(-1) * ray_d + ray_o # Zhenyi Wan [2025/4/10] (N_rand,3)
         # Zhenyi Wan [2025/4/8] Extract BRDF values and weight
         if BRDF_Buffer is not None:
-            metallic, metallic_weights = BRDF_Buffer.metallic[:, 0:1], BRDF_Buffer.metallic[:, 1:]# Zhenyi Wan [2025/4/9] [N_rand, 1]; [N_rand, N_samples]
-            roughness, roughness_weights = BRDF_Buffer.roughness[:, 0:1], BRDF_Buffer.roughness[:, 1:]
-            albedo, albedo_weights = BRDF_Buffer.albedo[:, 0:3], BRDF_Buffer.albedo[:, 3:]# Zhenyi Wan [2025/4/9] [N_rand, 3]; [N_rand, N_samples]
-            normals, normals_weights = BRDF_Buffer.normals[:, 0:3], BRDF_Buffer.normals[:, 3:]
+            metallic, metallic_weights = BRDF_Buffer["metallic"][:, 0:1], BRDF_Buffer["metallic"][:, 1:]# Zhenyi Wan [2025/4/9] [N_rand, 1]; [N_rand, N_samples]
+            roughness, roughness_weights = BRDF_Buffer["roughness"][:, 0:1], BRDF_Buffer["roughness"][:, 1:]
+            albedo, albedo_weights = BRDF_Buffer["albedo"][:, 0:3], BRDF_Buffer["albedo"][:, 3:]# Zhenyi Wan [2025/4/9] [N_rand, 3]; [N_rand, N_samples]
+            normals, normals_weights = BRDF_Buffer["normals"][:, 0:3], BRDF_Buffer["normals"][:, 3:]
 
             normals = torch.nn.functional.normalize(normals, dim=-1) # Zhenyi Wan [2025/4/22]
             metallic = torch.sigmoid(metallic)
@@ -442,6 +442,10 @@ def render_rays(
         PBR_pts = None
 
         if BRDF_Buffer is not None:
+            metallic = BRDF_Buffer["metallic"]
+            roughness = BRDF_Buffer["roughness"]
+            albedo = BRDF_Buffer["albedo"]
+            normals = BRDF_Buffer["normals"]
             metallic_weights = None
             roughness_weights = None
             albedo_weights = None

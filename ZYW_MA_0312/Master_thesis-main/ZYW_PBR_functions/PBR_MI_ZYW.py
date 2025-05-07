@@ -42,6 +42,10 @@ class NeILFPBR(nn.Module):
 
         # point: [N, 3], incident_dirs: [N, 128, 3]
         N, S, _ = incident_dirs.shape # Zhenyi Wan [2025/4/15] N_rays, 128
+
+        device = points.device  # Ensure all tensors are on the same device
+        self.neilf_nn.to(device)  # Move the neural network to the same device as `points`
+
         points = points.unsqueeze(1).repeat([1, S, 1])  # [N, 128, 3]
         nn_inputs = torch.cat([points, -incident_dirs], axis=2)  # [N, 128, 6]
         nn_inputs = nn_inputs.reshape([-1, 6])  # [N * 128, 6]
@@ -66,8 +70,8 @@ class NeILFPBR(nn.Module):
         output_dirs = output_dirs.unsqueeze(dim=1)  # [N, 1, 3]
         normal_dirs = normals.unsqueeze(dim=1)  # [N, 1, 3]
         base_color = base_color.unsqueeze(dim=1)  # [N, 1, 3]
-        roughness = roughness.unsqueeze(dim=1).reshape(-1, 1)  # [N, 1, 1]
-        metallic = metallic.unsqueeze(dim=1).reshape(-1, 1)  # [N, 1, 1]
+        roughness = roughness.unsqueeze(dim=1)  # [N, 1, 1]
+        metallic = metallic.unsqueeze(dim=1) # [N, 1, 1]
 
         def _dot(a, b):
             return (a * b).sum(dim=-1, keepdim=True)  # [N, 1, 1]
@@ -86,7 +90,9 @@ class NeILFPBR(nn.Module):
             D = _d_sg(roughness, h_d_n)
 
             # Fresnel term F
-            F_0 = 0.04 * (1 - metallic) + base_color * metallic  # [N, 1, 3]
+            #F_0 = 0.04 * (1 - metallic) + base_color * metallic  # [N, 1, 3]
+            F_0 = (0.04 * (1 - metallic) + base_color * metallic)  # [N, 1, 3]
+            # Ensure F_0 and h_d_o have compatible shapes
             F = F_0 + (1.0 - F_0) * ((1.0 - h_d_o) ** 5)  # [N, S, 1]
 
             # geometry term V, we use V = G / (4 * cos * cos) here
