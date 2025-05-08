@@ -223,6 +223,9 @@ def train(args):
 
         epoch_step = 0
 
+        total_time_NeRO = 0.0
+        total_time_NeILF = 0.0
+
         for train_data in train_loader:
 
             time0 = time.time()
@@ -398,6 +401,13 @@ def train(args):
             # end of core optimization loop
             dt = time.time() - time0
 
+            # Track PBR computation times
+            if ret.get("color_NeRO") is not None:
+                total_time_NeRO += ret["color_NeRO"]["time_NeRO"]
+            if ret.get("color_NeILF") is not None:
+                total_time_NeILF += ret["color_NeILF"]["time_NeILF"]
+
+
             if args.sky_model_type == 'mlp':
                 sky_model_lr = sky_model.sky_scheduler.get_last_lr()[0]
                 sky_style_lr = sky_model.sky_style_scheduler.get_last_lr()[0]
@@ -446,6 +456,8 @@ def train(args):
                         print(">>> NeILFPBR loss: {:.6f}".format(loss_NeILF))
 
                     print("each iter time {:.05f} seconds".format(dt))
+                    print(f"Total NeRO_PBR time: {total_time_NeRO:.2f} seconds.")
+                    print(f"Total NeILF_PBR time: {total_time_NeILF:.2f} seconds.")
 
                 if global_step % args.i_weights == 0: # Zhenyi Wan [2025/4/16] every i_weights step save the model
                     print("Saving checkpoints at {} to {}...".format(global_step, out_folder))

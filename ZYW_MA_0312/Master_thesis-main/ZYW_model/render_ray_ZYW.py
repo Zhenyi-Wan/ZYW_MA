@@ -470,14 +470,20 @@ def render_rays(
     ret["color_NeILF"] = None
     if args.use_NeROPBR is True:
         # Zhenyi Wan [2025/5/8] NeRO PBR, which uses traditional BRDF render method.
+        start_time_NeRO = time.time()  # Start timing
         color_NeRO, _ = NeRO_PBR(PBR_pts, roughness, metallic, albedo, normals, ray_d)
-        ret["color_NeRO"] = {"color_NeRO":color_NeRO}
+        end_time_NeRO = time.time()  # End timing
+        time_NeRO = end_time_NeRO - start_time_NeRO
+        ret["color_NeRO"] = {"color_NeRO":color_NeRO, "time_NeRO":time_NeRO}
 
     if args.use_NeILFPBR is True:
+        start_time_NeILF = time.time()  # Start timing
         view_d = -ray_d # Zhenyi Wan [2025/4/15] View direction is the opposite to ray_d
         # Zhenyi Wan [2025/54/8] NeILF PBR, which uses traditional BRDF render method.
         color_NeILF, _ = NeILF_PBR(PBR_pts, roughness, metallic, albedo, normals, view_d)
-        ret["color_NeILF"] = {"color_NeILF":color_NeILF}
+        end_time_NeILF = time.time()  # End timing
+        time_NeILF = end_time_NeILF - start_time_NeILF
+        ret["color_NeILF"] = {"color_NeILF":color_NeILF, "time_NeILF":time_NeILF}
 
 
 
