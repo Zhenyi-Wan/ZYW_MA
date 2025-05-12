@@ -44,16 +44,22 @@ def render_single_image(
     """
     # Zhenyi Wan [2025/4/17] Render rays into an image
 
-    all_ret = OrderedDict([("outputs_coarse", OrderedDict()), ("outputs_fine", OrderedDict())])
+    all_ret = OrderedDict([
+        ("outputs_coarse", OrderedDict()),
+        ("outputs_fine", OrderedDict()),
+        ("outputs_roughness", OrderedDict()),
+        ("outputs_metallic", OrderedDict()),
+        ("outputs_albedo", OrderedDict()),
+        ("outputs_normals", OrderedDict()),
+        ("color_NeRO", OrderedDict()),
+        ("color_NeILF", OrderedDict()),
+    ])
 
     default_cfg = {
         # shader network for NeRO method
         'shader_config': {},
     }
     cfg = {**default_cfg}
-
-    NeRO_PBR = AppShadingNetwork(cfg['shader_config'])
-    NeILF_PBR = NeILFPBR()
 
     # Zhenyi Wan [2025/4/1] get the number of rays
     N_rays = ray_batch["ray_o"].shape[0]  # 360000 in train, 1440000 in eval
@@ -78,7 +84,7 @@ def render_single_image(
         else:
             train_depth_prior_chunk = None
 
-        ret, _ = render_rays(
+        ret, _, _, _ = render_rays(
             args,
             chunk,
             model,
@@ -109,17 +115,14 @@ def render_single_image(
                 if ret["outputs_coarse"][k] is not None:
                     all_ret["outputs_coarse"][k] = []
 
-            for key in ["outputs_roughness", "outputs_metallic", "outputs_albedo", "outputs_normals", "outputs_fine", "color_NERO", "color_NeILF"]:
-                if key in ret:
-                    if ret[key] is None:
-                        all_ret[key] = None
-                    else:
-                        all_ret[key] = {}
-                        for k in ret[key]:
-                            if ret[key][k] is not None:
-                                all_ret[key][k] = []
+            for key in ["outputs_roughness", "outputs_metallic", "outputs_albedo", "outputs_normals", "outputs_fine", "color_NeRO", "color_NeILF"]:
+                if key not in ret or ret[key] is None:
+                    all_ret[key] = None
+                else:
+                    for k in ret[key]:
+                        if ret[key][k] is not None:
+                            all_ret[key][k] = []
 
-            all_ret["ray_d"] = []
 
         for k in ret["outputs_coarse"]:
             if ret["outputs_coarse"][k] is not None:
@@ -153,12 +156,22 @@ def render_single_image(
         if ret["color_NeRO"] is not None:
             for k in ret["color_NeRO"]:
                 if ret["color_NeRO"][k] is not None:
-                    all_ret["color_NeRO"].append(ret["color_NeRO"][k].cpu())
+                    # Convert to tensor if it's a float
+                    value = ret["color_NeRO"][k]
+                    if not isinstance(value, torch.Tensor):
+                        value = torch.tensor(value)
+                    if value.dim() > 0:  # Ensure it's not a zero-dimensional tensor
+                        all_ret["color_NeRO"][k].append(value.cpu())
 
         if ret["color_NeILF"] is not None:
             for k in ret["color_NeILF"]:
                 if ret["color_NeILF"][k] is not None:
-                    all_ret["color_NeILF"].append(ret["color_NeILF"][k].cpu())
+                    # Convert to tensor if it's a float
+                    value = ret["color_NeILF"][k]
+                    if not isinstance(value, torch.Tensor):
+                        value = torch.tensor(value)
+                    if value.dim() > 0:  # Ensure it's not a zero-dimensional tensor
+                        all_ret["color_NeILF"][k].append(value.cpu())
 
 
     rgb_strided = torch.ones(ray_sampler.H, ray_sampler.W, 3)[::render_stride, ::render_stride, :] # Zhenyi Wan [2025/4/17] [H//3,W//s,3]
@@ -224,7 +237,7 @@ def render_single_image(
             
     # TODO: if invalid: replace with white
     # all_ret["outputs_coarse"]["rgb"][all_ret["outputs_coarse"]["mask"] == 0] = 1.0
-    if all_ret["outputs_fine"] is not None:
+    if ret["outputs_fine"] is not None:
         for k in all_ret["outputs_fine"]:
             if k == "random_sigma":
                 continue

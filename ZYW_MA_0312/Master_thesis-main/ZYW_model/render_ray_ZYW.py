@@ -6,6 +6,8 @@ from model_and_model_component.ReTR_model_LinGaoyuan import LinGaoyuan_ReTR_mode
 
 from ZYW_PBR_functions.field_ZYW import AppShadingNetwork
 from ZYW_PBR_functions.PBR_MI_ZYW import NeILFPBR
+
+import time
 # import imaginaire.model_utils.gancraft.voxlib as voxlib
 
 ########################################################################################################################
@@ -474,16 +476,16 @@ def render_rays(
         color_NeRO, _ = NeRO_PBR(PBR_pts, roughness, metallic, albedo, normals, ray_d)
         end_time_NeRO = time.time()  # End timing
         time_NeRO = end_time_NeRO - start_time_NeRO
-        ret["color_NeRO"] = {"color_NeRO":color_NeRO, "time_NeRO":time_NeRO}
+        ret["color_NeRO"] = {"color_NeRO":color_NeRO}
 
     if args.use_NeILFPBR is True:
         start_time_NeILF = time.time()  # Start timing
         view_d = -ray_d # Zhenyi Wan [2025/4/15] View direction is the opposite to ray_d
         # Zhenyi Wan [2025/54/8] NeILF PBR, which uses traditional BRDF render method.
-        color_NeILF, _ = NeILF_PBR(PBR_pts, roughness, metallic, albedo, normals, view_d)
+        color_NeILF = NeILF_PBR(PBR_pts, roughness, metallic, albedo, normals, view_d)
         end_time_NeILF = time.time()  # End timing
         time_NeILF = end_time_NeILF - start_time_NeILF
-        ret["color_NeILF"] = {"color_NeILF":color_NeILF, "time_NeILF":time_NeILF}
+        ret["color_NeILF"] = {"color_NeILF":color_NeILF}
 
 
 
@@ -554,4 +556,4 @@ def render_rays(
         depth_map = torch.sum(weights * z_vals, dim=-1)
         ret["outputs_fine"] = {"rgb": rgb, "weights": weights, "depth": depth_map}
 
-    return ret, z
+    return ret, z, time_NeRO, time_NeILF

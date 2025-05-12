@@ -280,7 +280,7 @@ def train(args):
                 print('The updating process of prior depth process will begin at epoch: {}'.format(epoch), 'step: {}'.format(global_step) )
 
             # Zhenyi Wan [2025/4/10] render part!
-            ret, z = render_rays(
+            ret, z, time_NeRO, time_NeILF = render_rays(
                 args = args,
                 ray_batch=ray_batch,
                 model=model,
@@ -402,10 +402,10 @@ def train(args):
             dt = time.time() - time0
 
             # Track PBR computation times
-            if ret.get("color_NeRO") is not None:
-                total_time_NeRO += ret["color_NeRO"]["time_NeRO"]
-            if ret.get("color_NeILF") is not None:
-                total_time_NeILF += ret["color_NeILF"]["time_NeILF"]
+            if time_NeRO is not None:
+                total_time_NeRO += time_NeRO
+            if time_NeILF is not None:
+                total_time_NeILF += time_NeILF
 
 
             if args.sky_model_type == 'mlp':
@@ -702,10 +702,10 @@ def log_view(
 
     rgb_pred = img_HWC2CHW(ret["outputs_coarse"]["rgb"].detach().cpu())# Zhenyi Wan [2025/4/17] [3,H//s,W//s]
     if ret.get("color_NeRO") is not None:
-        color_NeRO = img_HWC2CHW(ret["color_NeRO"].detach().cpu())
+        color_NeRO = img_HWC2CHW(ret["color_NeRO"]["color_NeRO"].detach().cpu())
 
     if ret.get("color_NeILF") is not None:
-        color_NeILF = img_HWC2CHW(ret["color_NeILF"].detach().cpu())
+        color_NeILF = img_HWC2CHW(ret["color_NeILF"]["color_NeILF"].detach().cpu())
 
     if ret.get("outputs_roughness") is not None and ret["outputs_roughness"].get("roughness") is not None:
         roughness_map = img_HWC2CHW(ret["outputs_roughness"]["roughness"].detach().cpu())  # [1,H//s,W//s]
@@ -882,10 +882,10 @@ def log_view(
     psnr_curr_img = img2psnr(pred_rgb.detach().cpu(), gt_img)
     print(prefix + "psnr_image_Original: ", psnr_curr_img)
     if color_NeRO is not None:
-        psnr_NeRO_img = img2psnr(ret["color_NeRO"].detach().cpu(), gt_img)
+        psnr_NeRO_img = img2psnr(ret["color_NeRO"]["color_NeRO"].detach().cpu(), gt_img)
         print(prefix + "psnr_image_NeROPBR: ", psnr_NeRO_img)
     if color_NeILF is not None:
-        psnr_NeILF_img = img2psnr(ret["color_NeILF"].detach().cpu(), gt_img)
+        psnr_NeILF_img = img2psnr(ret["color_NeILF"]["color_NeILF"].detach().cpu(), gt_img)
         print(prefix + "psnr_image_NeILFPBR: ", psnr_NeILF_img)
 
 
