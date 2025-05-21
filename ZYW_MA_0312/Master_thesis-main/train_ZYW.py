@@ -11,7 +11,7 @@ from model_and_model_component.data_loaders import dataset_dict
 from ZYW_model.render_ray_ZYW import render_rays
 from ZYW_model.render_image_ZYW import render_single_image
 from ZYW_model.model_ZYW import Model
-from model_and_model_component.sample_ray_LinGaoyuan import RaySamplerSingleImage
+from model_and_model_component.sample_ray_ZYW import RaySamplerSingleImage
 from ZYW_model.criterion_ZYW import Criterion
 from utils import img2mse, mse2psnr, img_HWC2CHW, colorize, cycle, img2psnr
 import config
@@ -280,7 +280,7 @@ def train(args):
                 print('The updating process of prior depth process will begin at epoch: {}'.format(epoch), 'step: {}'.format(global_step) )
 
             # Zhenyi Wan [2025/4/10] render part!
-            ret, z, time_NeRO, time_NeILF = render_rays(
+            ret, z, times = render_rays(
                 args = args,
                 ray_batch=ray_batch,
                 model=model,
@@ -330,7 +330,7 @@ def train(args):
                 loss_NeRO, scalars_to_log = criterion.NeRO_loss(ret["color_NeRO"], ray_batch, scalars_to_log)
             if args.use_NeILFPBR is True:
                 # NeILF loss
-                loss_NeILF, scalars_to_log = criterion.NeILF_loss(ret["color_NeILF"], ray_batch, scalars_to_log)
+                loss_NeILF, scalars_to_log = criterion.NeILF_loss(ret["color_NeILF"], ret["outputs_roughness"], ret["outputs_metallic"], ray_batch, ret["gradients"], scalars_to_log)
 
             'loss of sky area, add by LinGaoyuan'
             loss_sky_rgb = criterion.sky_loss_rgb(ret["outputs_coarse"], ray_batch)
@@ -401,6 +401,8 @@ def train(args):
             # end of core optimization loop
             dt = time.time() - time0
 
+            time_NeRO = times.get("time_NeRO")
+            time_NeILF = times.get("time_NeILF")
             # Track PBR computation times
             if time_NeRO is not None:
                 total_time_NeRO += time_NeRO
@@ -456,8 +458,10 @@ def train(args):
                         print(">>> NeILFPBR loss: {:.6f}".format(loss_NeILF))
 
                     print("each iter time {:.05f} seconds".format(dt))
-                    print(f"Total NeRO_PBR time: {total_time_NeRO:.2f} seconds.")
-                    print(f"Total NeILF_PBR time: {total_time_NeILF:.2f} seconds.")
+                    if time_NeRO is not None:
+                        print(f"Total NeRO_PBR time: {total_time_NeRO:.2f} seconds.")
+                    if time_NeILF is not None:
+                        print(f"Total NeILF_PBR time: {total_time_NeILF:.2f} seconds.")
 
                 if global_step % args.i_weights == 0: # Zhenyi Wan [2025/4/16] every i_weights step save the model
                     print("Saving checkpoints at {} to {}...".format(global_step, out_folder))

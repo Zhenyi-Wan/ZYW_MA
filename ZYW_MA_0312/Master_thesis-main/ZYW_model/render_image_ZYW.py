@@ -84,7 +84,7 @@ def render_single_image(
         else:
             train_depth_prior_chunk = None
 
-        ret, _, _, _ = render_rays(
+        ret, _, _ = render_rays(
             args,
             chunk,
             model,

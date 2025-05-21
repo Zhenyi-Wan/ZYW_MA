@@ -254,6 +254,32 @@ def sample_fine_pts(inv_uniform, N_importance, det, N_samples, ray_batch, weight
     pts = z_vals.unsqueeze(2) * viewdirs + ray_o  # [N_rays, N_samples + N_importance, 3]
     return pts, z_vals
 
+def sample_brdfs(points, roughness, metallic, is_gradient=False):
+    """
+    :param points: [N_rays, 3]
+    :param is_gradient: if True, will return the gradient of the points
+    :return: [N_rays, 2, 3]
+    """
+    points.requires_grad_(True) # [N,3]
+    gradients = []
+    for brdf_slice in [roughness, metallic]:#[N, 1], [N, 1]
+        if is_gradient:
+            d_output = torch.ones_like(brdf_slice, requires_grad=False)
+            gradient = torch.autograd.grad(
+                    outputs=brdf_slice,
+                    inputs=points,
+                    grad_outputs=d_output,
+                    create_graph=True,
+                    retain_graph=True,
+                    only_inputs=True,
+                    allow_unused=True)[0]
+        else:
+            gradient = torch.zeros_like(points)
+        gradients.append(gradient)
+    gradients = torch.stack(gradients, dim=-2) # [N, 2, 3]
+
+    return gradients
+
 
 def render_rays(
     args,
@@ -437,6 +463,9 @@ def render_rays(
             roughness = torch.sigmoid(roughness)
             albedo = torch.sigmoid(albedo)
 
+            is_gradient = (mode == 'train')
+            gradients = sample_brdfs(PBR_pts, roughness, metallic, is_gradient=is_gradient) # [N_rand, 2, 3]
+
         'LinGaoyuan_operation_20240906: add cov of depth prediction based on Uncle SLAM formular 5'
         depth_pred = depth_map[..., None]
         depth_cov = torch.sqrt(torch.sum(weights*(z_vals-depth_pred)*(z_vals-depth_pred)))
@@ -470,6 +499,8 @@ def render_rays(
 
     ret["color_NeRO"] = None
     ret["color_NeILF"] = None
+    time_NeRO = None
+    time_NeILF = None
     if args.use_NeROPBR is True:
         # Zhenyi Wan [2025/5/8] NeRO PBR, which uses traditional BRDF render method.
         start_time_NeRO = time.time()  # Start timing
@@ -486,6 +517,10 @@ def render_rays(
         end_time_NeILF = time.time()  # End timing
         time_NeILF = end_time_NeILF - start_time_NeILF
         ret["color_NeILF"] = {"color_NeILF":color_NeILF}
+
+    times = {
+    "NeRO": time_NeRO,
+    "NeILF": time_NeILF}
 
 
 
@@ -521,11 +556,13 @@ def render_rays(
         ret["outputs_metallic"] = {"metallic":metallic, "metallic_weights": metallic_weights}
         ret["outputs_albedo"] = {"albedo":albedo, "albedo_weights": albedo_weights}
         ret["outputs_normals"] = {"normals":normals, "normals_weights": normals_weights}
+        ret["gradients"] = {"gradients":gradients}
     else:
         ret["outputs_roughness"] = None
         ret["outputs_metallic"] = None
         ret["outputs_albedo"] = None
         ret["outputs_normals"] = None
+        ret["gradients"] = None
 
     if N_importance > 0:
         # detach since we would like to decouple the coarse and fine networks
@@ -556,4 +593,4 @@ def render_rays(
         depth_map = torch.sum(weights * z_vals, dim=-1)
         ret["outputs_fine"] = {"rgb": rgb, "weights": weights, "depth": depth_map}
 
-    return ret, z, time_NeRO, time_NeILF
+    return ret, z, times

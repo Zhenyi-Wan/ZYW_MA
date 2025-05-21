@@ -41,15 +41,28 @@ class Criterion(nn.Module):
 
 
 
-    def NeILF_loss(self, outputs, ray_batch, scalars_to_log):
+    def NeILF_loss(self, outputs, roughness_output, metallic_output, ray_batch, gradients, scalars_to_log):
         color_NeILF = outputs["color_NeILF"]
         if "mask" in outputs:
             pred_mask = outputs["mask"].float()
         else:
             pred_mask = None
         gt_rgb = ray_batch["rgb"]# Zhenyi Wan [2025/4/10] The ground truth RGB
-
+        # RGB loss
         loss_NeILF = img2mse(color_NeILF, gt_rgb, pred_mask)
+        # set the weight of smoothness loss and lambertian loss
+        lambertian_weight = 0.005  # We want to keep more details in the road
+        smoothness_weight = 0.0005  
+        # smoothness loss
+        rgb_grad = ray_batch["rgb_grad"].cuda().reshape(-1) #[H*W]
+        brdf_grads = gradients["NeILF_grad"] #[N_rand, 2, 3]
+        smooth_loss = (brdf_grads.norm(dim=-1).sum(dim=-1) * (-rgb_grad).exp()).mean()
+        # lambertian loss
+        roughness = roughness_output["roughness"]
+        metallic = metallic_output["metallic"]
+        reg_loss = reg_loss = ((roughness - 1).abs()).mean() + ((metallic - 0).abs()).mean()
+        # combine the loss
+        loss_NeILF = loss_NeILF + lambertian_weight * reg_loss + smoothness_weight * smooth_loss
 
         return loss_NeILF, scalars_to_log
 
