@@ -1,5 +1,5 @@
 ### INPUT
-expname = Nuscene_scene_0075_final_version_eval
+expname = Nuscene_scene_0075_BRDF_v02_trainval
 # expname = Nuscene_aliasing_bounded
 
 rootdir = ./
@@ -26,7 +26,7 @@ image_resize_W = 800
 
 ### TRAINING
 num_source_views = 6
-N_rand = 2048
+N_rand = 3072
 lrate_feature = 0.001
 lrate_gnt = 0.0005
 lrate_decay_factor = 0.5
@@ -56,7 +56,7 @@ lrate_retr_feature_extractor = 0.001
 ### BRDF
 BRDF_model = True
 use_NeILFPBR = True
-use_NeROPBR = True
+use_NeROPBR = False
 
 
 ### TESTING

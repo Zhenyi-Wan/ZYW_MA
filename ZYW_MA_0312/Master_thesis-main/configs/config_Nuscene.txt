@@ -26,7 +26,7 @@ image_resize_W = 800
 
 ### TRAINING
 num_source_views = 6
-N_rand = 3072
+N_rand = 3072/2048
 lrate_feature = 0.001
 lrate_gnt = 0.0005
 lrate_decay_factor = 0.5
